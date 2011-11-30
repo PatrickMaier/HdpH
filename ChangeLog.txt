@@ -1,0 +1,7 @@
+HdpH ChangeLog
+
+Version 'IFL11_submit' (30 Nov 2011)
+
+* This version is described is some detail in the IFL 2011 post-proceedings
+  submission (available from the authors' web pages). Also contains code for
+  benchmarks reported in that paper.

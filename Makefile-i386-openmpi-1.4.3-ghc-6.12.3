@@ -1,0 +1,64 @@
+## HdpH Makefile
+##
+## ARCH: i386
+## MPI: OpenMPI
+## GHC: 6.12.3
+
+# GHC environment (version 6.12.3)
+HC=ghc-6.12.3
+HLIBDIR=lib  ## some libraries from Hackage, installed locally
+HCFLAGS=-threaded -cpp -O2
+#HCFLAGS=-threaded -cpp -O0 -DHDPH_DEBUG
+
+# OpenMPI environment (locally installed version 1.4.3)
+CC=$(HOME)/sw/openmpi/bin/mpicc
+CLIBS=-lwrap_mpi -lmpi -lopen-rte -lopen-pal -ldl -lnsl -lutil -lm
+CLIBPATH=MP:$(HOME)/sw/openmpi/lib
+
+# C compiler flags
+CFLAGS=-Wall -fPIC -O3
+#CFLAGS=-Wall -fPIC -DMPI_DEBUG
+
+SRC=$(shell find TEST -name '*.hs' -o -name '*.lhs')
+EXE=$(basename $(SRC))
+MPLIB=MP/libwrap_mpi.a
+
+.PHONY: default all clean emacsclean distclean
+
+default: 
+	echo "No default target"
+
+all: $(EXE)
+
+clean:
+	rm -f $(EXE) $(MPLIB) $$(find . -name '*.o' -o -name '*.hi')
+
+emacsclean:
+	rm -f $$(find . -name '*~')
+
+distclean: clean emacsclean
+
+%.o: %.hs
+	$(HC) $(HCFLAGS) -i$(HLIBDIR) --make $<
+
+%.o: %.lhs
+	$(HC) $(HCFLAGS) -i$(HLIBDIR) --make $<
+
+TEST/MP/%: TEST/MP/%.hs $(MPLIB)
+	$(HC) $(HCFLAGS) -i$(HLIBDIR) -L$(CLIBPATH) $(CLIBS) --make $<
+
+TEST/HdpH/%: TEST/HdpH/%.hs $(MPLIB)
+	$(HC) $(HCFLAGS) -i$(HLIBDIR) -L$(CLIBPATH) $(CLIBS) --make $<
+
+TEST/HdpH_IO/%: TEST/HdpH_IO/%.hs $(MPLIB)
+	$(HC) $(HCFLAGS) -i$(HLIBDIR) -L$(CLIBPATH) $(CLIBS) --make $<
+
+# This rule must be last of all 'TEST' rules
+TEST/%: TEST/%.hs
+	$(HC) $(HCFLAGS) -i$(HLIBDIR) --make $<
+
+MP/libwrap_mpi.a: MP/wrap_mpi.o
+	cd MP; ar rc libwrap_mpi.a wrap_mpi.o
+
+MP/wrap_mpi.o: MP/wrap_mpi.c MP/wrap_mpi.h
+	cd MP; $(CC) $(CFLAGS) -c wrap_mpi.c
