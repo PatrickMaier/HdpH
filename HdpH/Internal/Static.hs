@@ -23,7 +23,7 @@
 
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE ScopedTypeVariables #-}  -- req'd for phantom type annotations
+{-# LANGUAGE ScopedTypeVariables #-}  -- req'd for type annot in 'staticAsTD'
 
 module HdpH.Internal.Static
   ( -- * 'Static' type constructor
@@ -33,25 +33,22 @@ module HdpH.Internal.Static
     staticAs,    -- :: a -> String -> Static a
     staticAsTD,  -- :: (Typeable t) => a -> String -> t -> Static a
 
-    -- * declaring 'Static' terms
-    StaticDecl,  -- instances: Monoid, Show
-    declare,     -- :: Static a -> StaticDecl
+    -- * eliminating 'Static' terms
+    unstatic,    -- :: Static a -> a
 
-    -- * registering global 'Static' declaration
-    register,    -- :: StaticDecl -> IO ()
-
-    -- * eliminating 'Static' terms (via registered global 'Static' decl)
-    unstatic     -- :: Static a -> a
+    -- * globally registering 'Static' terms
+    register     -- :: Static a -> IO ()
   ) where
 
 import Prelude hiding (error)
-import Control.DeepSeq (NFData, rnf)
+import Control.DeepSeq (NFData, deepseq)
 import Control.Monad (unless)
+import Data.Bits (shiftL, xor)
 import Data.Functor ((<$>))
+import Data.Int (Int32)
 import Data.IORef (readIORef, atomicModifyIORef)
-import qualified Data.Map as Map
-       (lookup, empty, singleton, union, unions, toList, difference, null)
-import Data.Monoid (Monoid(mempty, mappend, mconcat))
+import Data.List (foldl')
+import qualified Data.Map as Map (member, lookup, insert)
 import Data.Serialize (Serialize)
 import qualified Data.Serialize (put, get)
 import Data.Typeable (Typeable, Typeable1, typeOf)
@@ -59,12 +56,12 @@ import System.IO.Unsafe (unsafePerformIO)
 import Unsafe.Coerce (unsafeCoerce)
 
 import HdpH.Internal.Location (error)
-import HdpH.Internal.Misc (Void, AnyType(Any))
+import HdpH.Internal.Misc (AnyType(Any))
 import HdpH.Internal.State.Static (sdRef)
 import HdpH.Internal.Type.Static
-       (StaticLabel(StaticLabel), name, typerep,
-        Static(Static), label, value,
-        StaticDecl(StaticDecl), unStaticDecl)
+       (StaticLabel(StaticLabel), hash, name, typerep,
+        Static(Static), label, unstatic,
+        StaticDecl)
 
 
 -----------------------------------------------------------------------------
@@ -77,19 +74,22 @@ import HdpH.Internal.Type.Static
 -- * We call a term 't' /static/ if it could be declared at the top-level,
 --   that is if does not capture any variables.
 --
--- * A term 'stat' of type 'Static t' acts as serialisable reference to
---   a static term of type 't'.
+-- * In principle, a term 'stat' of type 'Static t' acts as serialisable
+--   reference to a static term of type 't'. However, here we realise
+--   terms of type 'Static t' as a pair consisting of such a serialisable
+--   reference (a unique label) and the refered-to static term itself.
+--
+-- * Only the serialisable reference is actually serialised when a term 'stat'
+--   of type 'Static t' is serialised. The link between that reference and
+--   the associated 'Static' term 'stat' is established by a registry mapping
+--   labels to /registered/ 'Static' terms, similar to the registry for
+--   global references.
 --
 -- * There are two ways of obtaining a term 'stat :: Stat t': By introducing
 --   it with one of the smart constructors 'staticAs' or 'staticAsTD',
---   or by deserialising it. In the former case, 'stat' will have a /fat/
---   representation pairing a unique label and with the associated static term.
---   In the latter case, 'stat' will have a /thin/ representation consisting
---   solely of the unique label.
---
--- * The link between 'stat :: Static t' and its associated static term
---   'x :: t' is established by a registry mapping /registered/ 'Static' terms
---   to static terms, similar to the registry for global references.
+--   or by deserialising it. The latter does require a lookup in the registry,
+--   hence it will fail (by producing a special 'Static' /error/ term) if
+--   the serialised reference is not registered.
 --
 -- * Unlike is the case for global references, the registry for 'Static' terms
 --   allows only very limited updates; in particular, no entries can ever be
@@ -98,13 +98,13 @@ import HdpH.Internal.Type.Static
 --
 -- * Another difference to global references is that the registry for 'Static'
 --   terms must be uniform on all nodes. That is, all nodes must associate
---   any given registered 'Static' term to the same static term.
+--   any given registered reference to the same 'Static' term.
 --
 -- * Applications using this module (even indirectly) must go through two
 --   distinct phases: The first phase introduces and registers all 'Static'
 --   terms (of which, by their nature, there can only be a statically bounded
---   number) but does not eliminate any. The second phase may eliminate
---   'Static' terms (via 'unstatic') but does not register any new ones.
+--   number) but does not deserialise any 'Static' terms. The second phase
+--   may deserialise 'Static' terms but does not register any new ones.
 
 
 -----------------------------------------------------------------------------
@@ -115,7 +115,7 @@ import HdpH.Internal.Type.Static
 --
 -- To demonstrate the simplest example, suppose module 'M1' introduces two
 -- 'Static' terms (as top-level variables, which is recommended but not
--- necessary)
+-- necessary).
 -- 
 -- > x_Static :: Static Int
 -- > x_Static = staticAs 42 "Fully_Qualified_Name_Of_M1.x"
@@ -129,12 +129,8 @@ import HdpH.Internal.Type.Static
 -- Then 'M1' ought to export
 --
 -- > registerStatic :: IO ()
--- > registerStatic = do register $ declare x_Static
--- >                     register $ declare f_Static
---
--- Or, the 'registerStatic' action can be coded more efficiently as follows
---
--- > registerStatic = register $ mconcat [declare x_Static, declare f_Static]
+-- > registerStatic = do register x_Static
+-- >                     register f_Static
 --
 -- Now suppose a module 'M3' imports 'M1'. It doesn't matter whether 'M3'
 -- imports the 'Static' terms of 'M1' directly; any function exported by
@@ -147,7 +143,7 @@ import HdpH.Internal.Type.Static
 -- > registerStatic :: IO ()
 -- > registerStatic = do M1.registerStatic
 -- >                     M2.registerStatic
--- >                     register $ declare x_Static
+-- >                     register x_Static
 --
 -- Note that 'M2' may import 'M1' and so 'M2.registerStatic' may call
 -- 'M1.registerStatic' again, after it was just called by 'M3.registerStatic'.
@@ -157,10 +153,11 @@ import HdpH.Internal.Type.Static
 --
 -- The main module must declare an action 'registerStatic', similar to
 -- 'M3.registerStatic' above. This action 'registerStatic' must be called
--- at the beginning of the 'main' function, before any call to 'unstatic'.
+-- at the beginning of the 'main' function, before calling any function
+-- that might deserialise a 'Static' term.
 --
--- For concrete examples on how to register 'Static' terms see the
--- demonstrators in directory TEST/HdpH.
+-- The module 'HdpH.Closure' will offer more convenient support for
+-- introducing and registering 'Static' terms linked to explicit closures.
 
 
 -----------------------------------------------------------------------------
@@ -170,41 +167,42 @@ import HdpH.Internal.Type.Static
 
 -- Constructs a 'StaticLabel' out of a fully qualified variable name 'nm'
 -- and a String rep 'ty' of some (monomorphic) type (usually produced by
--- 'show . typeOf'). The type rep 'ty' is used to discriminate between
--- instances of polymorphic 'Static' values.
+-- 'show . typeOf', or else the empty string). The type rep 'ty' is used
+-- to discriminate between instances of polymorphic 'Static' values.
 -- This constructor ensures that the resulting 'StaticLabel' is hyperstrict;
--- this constructor is not to be exported.
+-- this constructor is not to be exported. 
+-- NOTE: Hyperstrictness is guaranteed by the strictness flags in the data
+--       declaration of 'StaticLabel'. For the 'hash' field this already
+--       implies full normalisation, computing the hash also fully normalises
+--       the two remaining fields.
 mkStaticLabel :: String -> String -> StaticLabel
-mkStaticLabel nm ty =
-  rnf nm `seq` rnf ty `seq` StaticLabel { name = nm, typerep = ty }
-
-
--- Constructs a 'Static' term from a given static label (without
--- associating the resulting term to a static value).
--- Ensures that the resulting 'Static' term is hyperstrict in the label part;
--- this constructor is not to be exported.
-mkStatic :: StaticLabel -> Static a
-mkStatic lbl =
-  lbl `seq` Static { label = lbl, value = Nothing }
+mkStaticLabel nm ty = StaticLabel { hash = h, name = nm, typerep = ty }
+                        where
+                          h = hashString nm `hashStringWithSalt` ty
 
 
 -- Constructs a 'Static' term associated with the given static value 'val'
 -- and identified by the given name 'nm' and given discriminating type rep
 -- (passed as dummy arg of type 't').
+-- NOTE: Strictness flag on 'label' forces that field to WHNF (which conincides
+--       with NF due to hyperstrictness of StaticLabel).
 staticAsTD :: forall a t . (Typeable t) => a -> String -> t -> Static a
 staticAsTD val nm _ =
-  lbl `seq` Static { label = lbl, value = Just val }
+  Static { label = lbl, unstatic = val }
     where lbl = mkStaticLabel nm (show $ typeOf (undefined :: t))
 
 
 -- Constructs a 'Static' term associated with the given static value 'val'
 -- and identified by the given name 'nm' only.
+-- NOTE: Strictness as with 'staticAsTD'.
 staticAs :: a -> String -> Static a
-staticAs val nm = staticAsTD val nm (undefined :: Void)
+staticAs val nm =
+  Static { label = lbl, unstatic = val }
+    where lbl = mkStaticLabel nm ""
 
 
 -----------------------------------------------------------------------------
--- Eq/Ord/Show/NFData/Serialize instances for 'Static';
+-- Eq/Ord/Show/NFData instances for 'Static';
 -- all these instances care only about the 'label' part of a 'Static' term
 
 deriving instance Typeable1 Static
@@ -213,13 +211,23 @@ deriving instance Typeable1 Static
 instance Eq (Static a) where
   stat1 == stat2 = label stat1 == label stat2
 
-deriving instance Eq StaticLabel
+instance Eq StaticLabel where
+  lbl1 == lbl2 = hash lbl1    == hash lbl2 &&  -- compare 'hash' first
+                 name lbl1    == name lbl2 &&
+                 typerep lbl1 == typerep lbl2
 
 
 instance Ord (Static a) where
   stat1 <= stat2 = label stat1 <= label stat2
 
-deriving instance Ord StaticLabel
+instance Ord StaticLabel where
+  compare lbl1 lbl2 = case compare (hash lbl1) (hash lbl2) of -- cmp 'hash' 1st
+                        LT -> LT
+                        GT -> GT
+                        EQ -> case compare (name lbl1) (name lbl2) of
+                          LT -> LT
+                          GT -> GT
+                          EQ  -> compare (typerep lbl1) (typerep lbl2)
 
 
 -- Show instance mainly for debugging
@@ -229,109 +237,106 @@ instance Show (Static a) where
 instance Show StaticLabel where
   showsPrec _ lbl =
     showString (name lbl) .
-    showString "(" . showString (typerep lbl)  . showString ")"
+    if null (typerep lbl)
+      then showString ""
+      else showString "(" . showString (typerep lbl)  . showString ")"
 
 
 instance NFData (Static a)  -- default inst suffices ('label' part hypestrict,
-                            -- 'value' not to be forced)
+                            -- associated static value not to be forced)
 instance NFData StaticLabel -- default inst suffices (due to hyperstrictness)
 
 
+-----------------------------------------------------------------------------
+-- Serialize instance for 'Static'
+
 instance Serialize (Static a) where
   put = Data.Serialize.put . label
-  get = mkStatic <$> Data.Serialize.get  -- 'mkStatic' ensures hyperstrictness
+  get = resolve <$> Data.Serialize.get  
+        -- NOTES: 
+        -- * Hyperstrictness is enforced by 'resolve'.
+        -- * Deserialisation always succeeds in returning a 'Static' value,
+        --   however, that value may be 'staticError'.
 
 instance Serialize StaticLabel where
-  put lbl = Data.Serialize.put (name lbl) >>
+  put lbl = Data.Serialize.put (hash lbl) >>
+            Data.Serialize.put (name lbl) >>
             Data.Serialize.put (typerep lbl)
-  get = do nm <- Data.Serialize.get
+  get = do h  <- Data.Serialize.get
+           nm <- Data.Serialize.get
            ty <- Data.Serialize.get
-           return (mkStaticLabel nm ty)  -- 'mkStaticLabel' for hyperstrictness
+           return $ StaticLabel {hash = h, name = nm, typerep = ty}
+           -- NOTE: Hyperstrictness not enforced here, because return value 
+           --       is discarded after passing through 'resolve' above.
 
 
------------------------------------------------------------------------------
--- 'Static' declarations (abstract outwith this module)
-
--- Promotes the given 'Static' term (which must be in fat representation)
--- to a static declaration (by mapping the label to the associated static
--- value, existentially wrapped).
-declare :: Static a -> StaticDecl
-declare stat =
-  case value stat of
-    Just x  -> StaticDecl $ Map.singleton (label stat) (Any x)
-    Nothing -> error $ "HdpH.Internal.Static.declare: no value for " ++
-                       show stat
+-- Resolves a label obtained from deserialisation into a 'Static' value
+-- by looking up the label in the global 'Static' registry. Returns either
+-- the registered 'Static', or the special value 'staticError'.
+resolve :: StaticLabel -> Static a
+resolve lbl =
+  case Map.lookup lbl (unsafePerformIO $ readIORef sdRef) of
+    Just (Any stat) -> unsafeCoerce stat
+                       -- see below for arguments why unsafeCoerce is safe here
+    Nothing         -> staticError lbl
 
 
--- Static declarations form a monoid, at least if we assume that for each
--- 'Static' term 'stat' there is a unique associated static value 'x'.
--- (This assumption is fair if the labels of 'Static' terms are discriminated
--- either by their fully qualified names, or by their type reps (for
--- monomorphic types), and we assume that 'Static' terms within a module do 
--- not have conflicting declarations.) If there are conflicting declarations,
--- they will be silently accepted, but only one declaration will prevail
--- (which one depends on implementation details).
-instance Monoid StaticDecl where
-  mempty = StaticDecl Map.empty
-  sd1 `mappend` sd2 =
-    StaticDecl (unStaticDecl sd1 `Map.union` unStaticDecl sd2)
-  mconcat = StaticDecl . Map.unions . map unStaticDecl
+-- Special 'Static' value (which cannot be produced by the exported
+-- constructors) returned if 'resolve' encounters an unregistered label.
+-- Eliminating this 'Static' value will result in an error.
+staticError :: StaticLabel -> Static a
+staticError lbl =
+  Static { label    = StaticLabel { hash = 0, name = "", typerep = "" },
+           unstatic = error msg }
+             where
+               msg = "HdpH.Internal.Static: " ++ show lbl ++ " not registered"
 
 
--- Show instance only for debugging; only shows domain of 'StaticDecl'
-instance Show StaticDecl where
-  showsPrec _ sd = showString "StaticDecl " .
-                   shows (map fst $ Map.toList $ unStaticDecl sd)
-
-
------------------------------------------------------------------------------
--- registering global 'Static' declaration
-
--- Registers the given 'Static' declaration as part of the implicit global
--- 'Static' declaration. Must be called becore any call to 'unstatic'.
--- Guarantees never to overwrite an already registered 'Static' term
--- (ie. only the first effort at registering any 'Static' term succeeds).
-register :: StaticDecl -> IO ()
-register sd = do
-  sd0 <- readIORef sdRef
-  let new_sd = StaticDecl (unStaticDecl sd `Map.difference` unStaticDecl sd0)
-  unless (Map.null $ unStaticDecl new_sd) $
-    atomicModifyIORef sdRef $ \ sd0 -> (sd0 `mappend` new_sd, ())
-
-
------------------------------------------------------------------------------
--- eliminating 'Static' terms (via global 'Static' declaration)
-
--- Unwraps a 'Static' term 'stat', yielding the associated static value;
--- aborts with a runtime error if 'stat' has not been registered.
--- NOTE: This function depends on implicit state yet has pure type signature.
---       This is justified provided there is a clear phase distinction
---       between 'Static' registration and 'Static' elimination. That is,
---       all calls to 'register' must precede any calls to 'unstatic'.
-unstatic :: Static a -> a
-unstatic stat = unsafePerformIO $ do
-  sd <- readIORef sdRef
-  case Map.lookup (label stat) (unStaticDecl sd) of
-    Just (Any x) -> return $ unsafeCoerce x
-                    -- see below for an argument why unsafeCoerce is safe here
-    Nothing      -> error $ "HdpH.Internal.Static.unstatic: " ++
-                            show stat ++ " not registered"
-
-
--------------------------------------------------------------------------------
--- Why 'unsafeCoerce' in safe in 'unstatic'
+-- Why 'unsafeCoerce' in safe in 'resolve':
 --
 -- * 'Static' terms can only be introduced by the smart constructors
 --   'staticAs' and 'staticAsTD'.
 --
--- * We assume that the label part of the fat representation of 'Static'
---   terms (which is the result of the smart constructors) is a /key/.
---   That is, whenever terms 'stat1 :: Static t1' and 'stat2 :: Static t2'
---   are introduced by 'staticAs' or 'staticAsTD' such that
---   'label stat1 == label stat2' (and hence 'stat1 == stat2') then
---   'value stat1 :: t1' is identical to 'value stat2 :: t2' (which
+-- * We assume that the label part of 'Static' terms (as constructed by the
+--   smart constructors) is a /key/.  That is, whenever terms
+--   'stat1 :: Static t1' and 'stat2 :: Static t2' are introduced by
+--   'staticAs' or 'staticAsTD' such that 'label stat1 == label stat2' then
+--   'unstatic stat1 :: t1' is identical to 'unstatic stat2 :: t2' (which
 --   also implies that the type 't1' is identical to 't2'). This assumption
 --   should hold if labels are fully qualified top-level names.
 --
--- * Thus, we can safely super-impose (using 'unsafeCoerce') the phantom type
---   of a 'Static' term on to its associated static term.
+-- * Thus, we can safely super-impose (using 'unsafeCoerce') the return type
+--   'Static a' of 'resolve' on the returned 'Static' term. This type will
+--   have been dictated by the calling context of 'resolve', ie. by the
+--   calling context of deserialisation.
+
+
+-----------------------------------------------------------------------------
+-- globally registering 'Static' terms
+
+-- Registers the given 'Static' term as part of the implicit global 'Static'
+-- declaration. Must be called becore any attempts to deserialise 'Static'
+-- terms. Guarantees never to overwrite an already registered'Static' term
+-- (ie. only first try at registering a 'Static' term succeeds).
+register :: Static a -> IO ()
+register stat = do
+  sd0 <- readIORef sdRef
+  unless (Map.member (label stat) sd0) $
+    atomicModifyIORef sdRef $ \ sd ->
+      (Map.insert (label stat) (Any stat) sd, ())
+
+
+-----------------------------------------------------------------------------
+-- auxiliary stuff: hashing strings; adapted from Data.Hashable.
+-- NOTE: Hashing fully evaluates the String argument as a side effect.
+
+hashStringWithSalt :: Int32 -> String -> Int32
+hashStringWithSalt = foldl' (\ h ch -> h `combine` toEnum (fromEnum ch))
+                       where
+                         combine :: Int32 -> Int32 -> Int32
+                         combine h1 h2 = (h1 + h1 `shiftL` 5) `xor` h2
+
+hashString :: String -> Int32
+hashString = hashStringWithSalt defaultSalt
+               where
+                 defaultSalt = 5381

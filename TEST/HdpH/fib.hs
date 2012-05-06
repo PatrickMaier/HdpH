@@ -6,14 +6,16 @@
 --
 -----------------------------------------------------------------------------
 
+{-# LANGUAGE TemplateHaskell #-}
+
 module Main where
 
 import Prelude
 import Control.Exception (evaluate)
 import Control.Monad (when)
+import Data.Functor ((<$>))
 import Data.List (elemIndex, stripPrefix)
 import Data.Maybe (fromJust)
-import Data.Monoid (mconcat)
 import System.Environment (getArgs)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 import System.Random (mkStdGen, setStdGen)
@@ -21,24 +23,31 @@ import System.Random (mkStdGen, setStdGen)
 import qualified MP.MPI_ByteString as MPI
 import HdpH (RTSConf(..), defaultRTSConf,
              Par, runParIO,
-             force, fork, spark, new, get, put, glob, rput,
-             Env, encodeEnv, decodeEnv,
-             toClosure, unsafeMkClosure, unClosure,
-             DecodeStatic, decodeStatic,
-             Static, staticAs, declare, register)
+             allNodes, force, fork, spark, new, get, put, glob, rput,
+             GIVar, NodeId,
+             Closure, unClosure, toClosure, mkClosure, static, static_,
+             StaticId, staticIdTD, register)
+import HdpH.Strategies (parDivideAndConquer, pushDivideAndConquer)
+import qualified HdpH.Strategies as Strategies (registerStatic)
 import HdpH.Internal.Misc (timeIO)  -- for measuring runtime
 
 
 -----------------------------------------------------------------------------
--- 'Static' declaration and registration
+-- 'Static' registration
 
-instance DecodeStatic Integer
+instance StaticId Int
+instance StaticId Integer
 
 registerStatic :: IO ()
-registerStatic =
-  register $ mconcat
-    [declare dist_fib_Static,
-     declare (decodeStatic :: Static (Env -> Integer))]
+registerStatic = do
+  Strategies.registerStatic
+  register $ staticIdTD (undefined :: Int)
+  register $ staticIdTD (undefined :: Integer)
+  register $(static 'dist_fib_abs)
+  register $(static 'dnc_trivial_abs)
+  register $(static_ 'dnc_simplySolve)
+  register $(static_ 'dnc_decompose)
+  register $(static_ 'dnc_combineSolutions)
 
 
 -----------------------------------------------------------------------------
@@ -73,27 +82,61 @@ dist_fib :: Int -> Int -> Int -> Par Integer
 dist_fib seqThreshold parThreshold n
   | n <= k    = force $ fib n
   | n <= l    = par_fib seqThreshold n
-  | otherwise = do v <- new
-                   gv <- glob v
-                   let val = dist_fib seqThreshold parThreshold (n - 1) >>=
-                             force >>=
-                             rput gv . toClosure
-                   let env = encodeEnv (seqThreshold, parThreshold, n, gv)
-                   let fun = dist_fib_Static
-                   spark $ unsafeMkClosure val fun env
-                   y <- dist_fib seqThreshold parThreshold (n - 2)
-                   clo_x <- get v
-                   force $ unClosure clo_x + y
+  | otherwise = do
+      v <- new
+      gv <- glob v
+      spark $(mkClosure [| dist_fib_abs (seqThreshold, parThreshold, n, gv) |])
+      y <- dist_fib seqThreshold parThreshold (n - 2)
+      clo_x <- get v
+      force $ unClosure clo_x + y
   where k = max 1 seqThreshold
         l = parThreshold
 
-dist_fib_Static :: Static (Env -> Par ())
-dist_fib_Static = staticAs
-  (\ env -> let (seqThreshold, parThreshold, n, gv) = decodeEnv env
-              in dist_fib seqThreshold parThreshold (n - 1) >>=
-                 force >>=
-                 rput gv . toClosure)
-  "Main.dist_fib_Static"
+dist_fib_abs :: (Int, Int, Int, GIVar (Closure Integer)) -> Par ()
+dist_fib_abs (seqThreshold, parThreshold, n, gv) =
+  dist_fib seqThreshold parThreshold (n - 1) >>=
+  force >>=
+  rput gv . toClosure
+
+
+-----------------------------------------------------------------------------
+-- parallel Fibonacci; distributed memory; using sparking d-n-c skeleton
+
+spark_skel_fib :: Int -> Int -> Par Integer
+spark_skel_fib seqThreshold n = unClosure <$> skel (toClosure n)
+  where 
+    skel = parDivideAndConquer
+             $(mkClosure [| dnc_trivial_abs (seqThreshold) |])
+             $(mkClosure [| dnc_simplySolve |])
+             $(mkClosure [| dnc_decompose |])
+             $(mkClosure [| dnc_combineSolutions |])
+
+dnc_trivial_abs :: (Int) -> (Closure Int -> Bool)
+dnc_trivial_abs (seqThreshold) =
+  \ clo_n -> unClosure clo_n <= max 1 seqThreshold
+
+dnc_simplySolve =
+  \ clo_n -> toClosure <$> (force $ fib $ unClosure clo_n)
+
+dnc_decompose =
+  \ clo_n -> let n = unClosure clo_n in [toClosure (n-1), toClosure (n-2)]
+
+dnc_combineSolutions =
+  \ _ [clo_x, clo_y] -> toClosure (unClosure clo_x + unClosure clo_y)
+
+
+-----------------------------------------------------------------------------
+-- parallel Fibonacci; distributed memory; using pushing d-n-c skeleton
+
+push_skel_fib :: [NodeId] -> Int -> Int -> Par Integer
+push_skel_fib nodes seqThreshold n = unClosure <$> skel (toClosure n)
+  where 
+    skel = pushDivideAndConquer
+             nodes
+             $(mkClosure [| dnc_trivial_abs (seqThreshold) |])
+             $(mkClosure [| dnc_simplySolve |])
+             $(mkClosure [| dnc_decompose |])
+             $(mkClosure [| dnc_combineSolutions |])
 
 
 -----------------------------------------------------------------------------
@@ -201,6 +244,25 @@ main = do
                              "{v2, " ++
                              "seqThreshold=" ++ show seqThreshold ++ ", " ++
                              "parThreshold=" ++ show parThreshold ++ "} " ++
+                             "fib " ++ show n ++ " = " ++ show x ++
+                             " {runtime=" ++ show t ++ "}"
+                Nothing -> return ()
+      3 -> do (output, t) <- timeIO $ evaluate =<< runParIO conf
+                               (spark_skel_fib seqThreshold n)
+              case output of
+                Just x  -> putStrLn $
+                             "{v3, " ++
+                             "seqThreshold=" ++ show seqThreshold ++ "} " ++
+                             "fib " ++ show n ++ " = " ++ show x ++
+                             " {runtime=" ++ show t ++ "}"
+                Nothing -> return ()
+      4 -> do (output, t) <- timeIO $ evaluate =<< runParIO conf
+                               (allNodes >>= \ nodes ->
+                                push_skel_fib nodes seqThreshold n)
+              case output of
+                Just x  -> putStrLn $
+                             "{v4, " ++
+                             "seqThreshold=" ++ show seqThreshold ++ "} " ++
                              "fib " ++ show n ++ " = " ++ show x ++
                              " {runtime=" ++ show t ++ "}"
                 Nothing -> return ()

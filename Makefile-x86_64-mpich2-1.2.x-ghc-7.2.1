@@ -4,6 +4,14 @@
 ## MPI: MPICH2
 ## GHC: 7.2.1
 
+## To load HdpH programs into GHCi:
+## $> make MP/libwrap_mpi.so
+## $> ghci -ilib -LMP -lwrap_mpi TEST/HdpH/...
+
+## To run HdpH programs:
+## $> make TEST/HdpH/...
+## $> mpiexec -env LD_LIBRARY_PATH MP -n ... TEST/HdpH/...
+
 # GHC environment (version 7.2.1)
 HC=ghc-7.2.1
 HLIBDIR=lib  ## some libraries from Hackage, installed locally
@@ -12,8 +20,8 @@ HCFLAGS=-threaded -rtsopts -cpp -O2
 
 # MPICH2 environment (version 1.2.x that comes with CentOS 5.x)
 CC=/usr/lib64/mpich2/bin/mpicc
-CLIBS=-lwrap_mpi -lmpich -lopa -lpthread -lrt
-CLIBPATH=MP:/usr/lib64/mpich2/lib
+CLIBS=-lwrap_mpi
+CLIBPATH=MP
 
 # C compiler flags
 CFLAGS=-Wall -fPIC -O3
@@ -21,7 +29,7 @@ CFLAGS=-Wall -fPIC -O3
 
 SRC=$(shell find TEST -name '*.hs' -o -name '*.lhs')
 EXE=$(basename $(SRC))
-MPLIB=MP/libwrap_mpi.a
+MPLIB=MP/libwrap_mpi.so
 
 .PHONY: default all clean emacsclean distclean
 
@@ -57,8 +65,8 @@ TEST/HdpH_IO/%: TEST/HdpH_IO/%.hs $(MPLIB)
 TEST/%: TEST/%.hs
 	$(HC) $(HCFLAGS) -i$(HLIBDIR) --make $<
 
-MP/libwrap_mpi.a: MP/wrap_mpi.o
-	cd MP; ar rc libwrap_mpi.a wrap_mpi.o
+MP/libwrap_mpi.so: MP/wrap_mpi.o
+	cd MP; $(CC) -shared -o libwrap_mpi.so wrap_mpi.o
 
 MP/wrap_mpi.o: MP/wrap_mpi.c MP/wrap_mpi.h
 	cd MP; $(CC) $(CFLAGS) -c wrap_mpi.c

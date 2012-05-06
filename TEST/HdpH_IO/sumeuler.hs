@@ -6,6 +6,8 @@
 --
 -----------------------------------------------------------------------------
 
+{-# LANGUAGE TemplateHaskell #-}
+
 module Main where
 
 import Prelude
@@ -13,7 +15,6 @@ import Control.Concurrent (forkIO)
 import Control.DeepSeq (NFData, deepseq)
 import Data.List (stripPrefix)
 import Data.Functor ((<$>))
-import Data.Monoid (mconcat)
 import System.Environment (getArgs)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 
@@ -22,25 +23,20 @@ import HdpH_IO (withHdpH,
                 NodeId, allNodes,
                 pushTo,
                 IVar, new, get, put,
-                glob, rput,
-                Env, encodeEnv, decodeEnv,
-                Closure, unClosure, toClosure, unsafeMkClosure,
-                DecodeStatic, decodeStatic,
-                Static, staticAs, declare, register)
+                GIVar, glob, rput,
+                Closure, unClosure, toClosure, mkClosure, static,
+                StaticId, staticIdTD, register)
 
 
 -----------------------------------------------------------------------------
--- 'Static' declaration and registration
+-- 'Static' registration
 
-instance DecodeStatic Integer
+instance StaticId Integer
 
 registerStatic :: IO ()
-registerStatic =
-  register $ mconcat
-    [declare totient_Static,
-     declare sum_totient_Static,
-     declare dist_sum_totient_Static,
-     declare (decodeStatic :: Static (Env -> Integer))]
+registerStatic = do
+  register $ staticIdTD (undefined :: Integer)
+  register $(static 'dist_sum_totient_abs)
 
 
 -----------------------------------------------------------------------------
@@ -49,22 +45,12 @@ registerStatic =
 totient :: Int -> Integer
 totient n = toInteger $ length $ filter (\ k -> gcd n k == 1) [1 .. n]
 
-totient_Static :: Static (Env -> Int -> Integer)
-totient_Static = staticAs
-  (const totient)
-  "Main.totient"
-
 
 -----------------------------------------------------------------------------
 -- sequential sum of totients
 
 sum_totient :: [Int] -> Integer
 sum_totient = sum . map totient
-
-sum_totient_Static :: Static (Env -> [Int] -> Integer)
-sum_totient_Static = staticAs
-  (const sum_totient)
-  "Main.sum_totient"
 
 
 -----------------------------------------------------------------------------
@@ -101,20 +87,16 @@ dist_sum_totient lower upper chunksize = do
       push_sum_euler (xs,node) = do
         v <- new
         gv <- glob v
-        let job = rput gv $ toClosure $ force $ sum_totient xs
-        let env = encodeEnv (xs, gv)
-        let fun = dist_sum_totient_Static
-        pushTo (unsafeMkClosure job fun env) node
+        let job = $(mkClosure [| dist_sum_totient_abs (xs, gv) |])
+        pushTo job node
         return v
 
       join :: IVar (Closure Integer) -> IO Integer
       join v = unClosure <$> get v
 
-dist_sum_totient_Static :: Static (Env -> IO ())
-dist_sum_totient_Static = staticAs
-  (\ env -> let (xs, gv) = decodeEnv env
-              in rput gv $ toClosure $ force $ sum_totient xs)
-  "Main.dist_sum_totient"
+dist_sum_totient_abs :: ([Int], GIVar (Closure Integer)) -> IO ()
+dist_sum_totient_abs (xs, gv) =
+  rput gv $ toClosure $ force $ sum_totient xs
 
 
 -----------------------------------------------------------------------------

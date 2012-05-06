@@ -6,6 +6,8 @@
 --
 -----------------------------------------------------------------------------
 
+{-# LANGUAGE TemplateHaskell #-}
+
 module Main where
 
 import Prelude
@@ -14,7 +16,6 @@ import Control.DeepSeq (NFData, deepseq)
 import Control.Monad (when)
 import Data.List (elemIndex, stripPrefix)
 import Data.Maybe (fromJust)
-import Data.Monoid (mconcat)
 import System.Environment (getArgs)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 import System.Random (mkStdGen, setStdGen, randomRIO)
@@ -24,24 +25,21 @@ import HdpH_IO (withHdpH,
                 allNodes,
                 pushTo, delay,
                 new, get, put,
-                glob, rput,
-                Env, encodeEnv, decodeEnv,
-                unClosure, toClosure, unsafeMkClosure,
-                DecodeStatic, decodeStatic,
-                Static, staticAs, declare, register)
+                GIVar, glob, rput,
+                Closure, unClosure, toClosure, mkClosure, static,
+                StaticId, staticIdTD, register)
 
 
 -----------------------------------------------------------------------------
--- 'Static' declaration and registration
+-- 'Static' registration
 
-instance DecodeStatic Integer
+instance StaticId Integer
 
 registerStatic :: IO ()
-registerStatic =
-  register $ mconcat
-    [declare dist_fib_Static,
-     declare dist_fib_nb_Static,
-     declare (decodeStatic :: Static (Env -> Integer))]
+registerStatic = do
+  register $ staticIdTD (undefined :: Integer)
+  register $(static 'dist_fib_abs)
+  register $(static 'dist_fib_nb_abs)
 
 
 -----------------------------------------------------------------------------
@@ -75,27 +73,24 @@ dist_fib :: Int -> Int -> Int -> IO Integer
 dist_fib seqThreshold parThreshold n
   | n <= k    = return $ force $ fib n
   | n <= l    = par_fib seqThreshold n
-  | otherwise = do v <- new
-                   gv <- glob v
-                   nodes <- allNodes
-                   randomTarget <- randomElem nodes
-                   let job = dist_fib seqThreshold parThreshold (n - 1) >>=
-                             rput gv . toClosure . force
-                   let env = encodeEnv (seqThreshold, parThreshold, n, gv)
-                   let fun = dist_fib_Static
-                   pushTo (unsafeMkClosure job fun env) randomTarget
-                   y <- dist_fib seqThreshold parThreshold (n - 2)
-                   clo_x <- get v   -- block handler here!
-                   return $ force $ unClosure clo_x + y
+  | otherwise = do
+      v <- new
+      gv <- glob v
+      nodes <- allNodes
+      randomTarget <- randomElem nodes
+      let job =
+            $(mkClosure [| dist_fib_abs (seqThreshold,parThreshold,n,gv) |])
+      pushTo job randomTarget
+      y <- dist_fib seqThreshold parThreshold (n - 2)
+      clo_x <- get v   -- block handler here!
+      return $ force $ unClosure clo_x + y
   where k = max 1 seqThreshold
         l = parThreshold
 
-dist_fib_Static :: Static (Env -> IO ())
-dist_fib_Static = staticAs
-  (\ env -> let (seqThreshold, parThreshold, n, gv) = decodeEnv env
-              in dist_fib seqThreshold parThreshold (n - 1) >>=
-                 rput gv . toClosure . force)
-  "Main.dist_fib_Static"
+dist_fib_abs :: (Int, Int, Int, GIVar (Closure Integer)) -> IO ()
+dist_fib_abs (seqThreshold, parThreshold, n, gv) =
+  dist_fib seqThreshold parThreshold (n - 1) >>=
+  rput gv . toClosure . force
 
 
 -----------------------------------------------------------------------------
@@ -105,32 +100,26 @@ dist_fib_nb :: Int -> Int -> Int -> IO Integer
 dist_fib_nb seqThreshold parThreshold n
   | n <= k    = return $ force $ fib n
   | n <= l    = par_fib seqThreshold n
-  | otherwise = do v <- new
-                   gv <- glob v
-                   nodes <- allNodes
-                   randomTarget <- randomElem nodes
-                   let job =
---                         forkIO_ $  -- fork to avoid blocking handler below
-                         delay $  -- fork to avoid blocking handler below
-                           dist_fib_nb seqThreshold parThreshold (n - 1) >>=
-                           rput gv . toClosure . force
-                   let env = encodeEnv (seqThreshold, parThreshold, n, gv)
-                   let fun = dist_fib_nb_Static
-                   pushTo (unsafeMkClosure job fun env) randomTarget
-                   y <- dist_fib_nb seqThreshold parThreshold (n - 2)
-                   clo_x <- get v   -- does not block handler due to forkIO
-                   return $ force $ unClosure clo_x + y
+  | otherwise = do
+      v <- new
+      gv <- glob v
+      nodes <- allNodes
+      randomTarget <- randomElem nodes
+      let job =
+            $(mkClosure [| dist_fib_nb_abs (seqThreshold,parThreshold,n,gv) |])
+      pushTo job randomTarget
+      y <- dist_fib_nb seqThreshold parThreshold (n - 2)
+      clo_x <- get v   -- does not block handler due to forkIO
+      return $ force $ unClosure clo_x + y
   where k = max 1 seqThreshold
         l = parThreshold
 
-dist_fib_nb_Static :: Static (Env -> IO ())
-dist_fib_nb_Static = staticAs
-  (\ env -> let (seqThreshold, parThreshold, n, gv) = decodeEnv env
---              in forkIO_ $
-              in delay $
-                   dist_fib_nb seqThreshold parThreshold (n - 1) >>=
-                   rput gv . toClosure . force)
-  "Main.dist_fib_nb_Static"
+dist_fib_nb_abs :: (Int, Int, Int, GIVar (Closure Integer)) -> IO ()
+dist_fib_nb_abs (seqThreshold, parThreshold, n, gv) =
+  forkIO_ $  -- fork to avoid blocking handler below
+  -- delay $  -- delay; may lead to deadlock
+    dist_fib_nb seqThreshold parThreshold (n - 1) >>=
+    rput gv . toClosure . force
 
 
 -----------------------------------------------------------------------------

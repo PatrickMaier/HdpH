@@ -6,11 +6,12 @@
 --
 -----------------------------------------------------------------------------
 
+{-# LANGUAGE TemplateHaskell #-}
+
 module Main where
 
 import Prelude
 import Data.List (stripPrefix)
-import Data.Monoid (mconcat)
 import System.Environment (getArgs)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 import System.Mem (performGC)
@@ -21,58 +22,43 @@ import HdpH (RTSConf(..), defaultRTSConf,
              myNode, allNodes, io, pushTo, new, get, glob, rput,
              NodeId,
              IVar, GIVar,
-             Env, encodeEnv, decodeEnv,
-             Closure, toClosure, unsafeMkClosure,
-             DecodeStatic, decodeStatic,
-             Static, staticAs, declare, register)
+             Closure, toClosure, mkClosure, static,
+             StaticId, staticIdTD, register)
 
 
 -----------------------------------------------------------------------------
--- 'Static' declaration and registration
+-- 'Static' registration
 
-instance DecodeStatic ()
+instance StaticId ()
 
 registerStatic :: IO ()
-registerStatic =
-  register $ mconcat
-    [declare hello_Static,
-     declare (decodeStatic :: Static (Env -> ()))]
+registerStatic = do
+  register $(static 'hello_abs)
+  register $ staticIdTD (undefined :: ())
 
 
 -----------------------------------------------------------------------------
 -- Hello World code
 
-unitClosure :: Closure ()
-unitClosure = toClosure ()
-
-
-hello :: GIVar (Closure ()) -> Par ()
-hello done = do here <- myNode
-                io $ do putStrLn $ "Hello from " ++ show here
-                rput done unitClosure
-
-hello_Static :: Static (Env -> Par ())
-hello_Static = staticAs
-  (\ env -> let done = decodeEnv env
-              in hello done)
-  "Main.hello"
-
-
 hello_world :: Par ()
 hello_world = do
   world <- allNodes
-  vs <- mapM spark_hello world
+  vs <- mapM push_hello world
   io performGC  -- just testing whether global IVars survive a GC
   mapM_ get vs
     where                   
-      spark_hello :: NodeId -> Par (IVar (Closure ()))
-      spark_hello node = do v <- new
-                            done <- glob v
-                            let val = hello done
-                            let env = encodeEnv done
-                            let fun = hello_Static
-                            pushTo (unsafeMkClosure val fun env) node
-                            return v
+      push_hello :: NodeId -> Par (IVar (Closure ()))
+      push_hello node = do 
+        v <- new
+        done <- glob v
+        pushTo $(mkClosure [| hello_abs done |]) node
+        return v
+
+hello_abs :: GIVar (Closure ()) -> Par ()
+hello_abs done = do
+  here <- myNode
+  io $ putStrLn $ "Hello from " ++ show here
+  rput done $ toClosure ()
 
 
 -----------------------------------------------------------------------------

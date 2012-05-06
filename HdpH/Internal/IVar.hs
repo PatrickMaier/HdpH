@@ -14,6 +14,8 @@ module HdpH.Internal.IVar
     newIVar,    -- :: IO (IVar m a)
     putIVar,    -- :: IVar m a -> a -> IO [Thread m]
     getIVar,    -- :: IVar m a -> (a -> Thread m) -> IO (Maybe a)
+    pollIVar,   -- :: IVar m a -> IO (Maybe a)
+    probeIVar,  -- :: IVar m a -> IO Bool
 
     -- * global IVar type
     GIVar,      -- synonym: GIVar m a = GRef (IVar m a)
@@ -25,7 +27,9 @@ module HdpH.Internal.IVar
   ) where
 
 import Prelude hiding (error)
+import Data.Functor ((<$>))
 import Data.IORef (IORef, newIORef, readIORef, atomicModifyIORef)
+import Data.Maybe (isJust)
 
 import HdpH.Internal.Location (NodeId, debug, dbgGIVar, dbgIVar)
 import HdpH.Internal.GRef (GRef, at, globalise, free, withGRef)
@@ -98,6 +102,22 @@ getIVar v c = do
           case e of
             Full x     -> (e,              Just x)
             Blocked cs -> (Blocked (c:cs), Nothing)
+
+
+-- Poll the given IVar 'v' and return its value if full, Nothing otherwise.
+-- Does not block.
+pollIVar :: IVar m a -> IO (Maybe a)
+pollIVar v = do
+  e <- readIORef v
+  case e of
+    Full x    -> return (Just x)
+    Blocked _ -> return Nothing
+
+
+-- Probe whether the given IVar is full, returning True if it is.
+-- Does not block.
+probeIVar :: IVar m a -> IO Bool
+probeIVar v = isJust <$> pollIVar v
 
 
 -----------------------------------------------------------------------------

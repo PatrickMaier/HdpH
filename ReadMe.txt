@@ -31,16 +31,15 @@ RUNNING HdpH
 
 The directory TEST/HdpH contains a few simple demonstrators. To run these,
 set the environment variable LD_LIBRARY_PATH (controling linker behaviour)
-to "MP:/path/to/MPI/libraries" where "/path/to/MPI/libraries" is the path
-to the dynamic libraries of the MPI installation used when building HdpH.
-Eg. in bash, I type
+to "MP". (Or to "MP:/path/to/MPI/libraries" if the linker does not know
+where the MPI libs are.) Eg. in bash, I type
 
-$> export LD_LIBRARY_PATH=MP:/usr/lib64/mpich2/lib
+$> export LD_LIBRARY_PATH=MP
 
 Then, in the HdpH root directory, invoke the executable via mpiexec.
 For instance, to compute the value of the Fibonacci function at 45
 (with a sequential threshold of 30 and a shared-memory threshold of 35)
-on 3 nodes, each with 4 cores, type
+on 3 nodes, each with 4 cores, I type
 
 $> time mpiexec -n 3 TEST/HdpH/fib -scheds=4 -d1 v2 45 30 35 +RTS -N4
 
@@ -48,29 +47,29 @@ The argument "v2" calls for distributed memory mode; the option "-d1"
 causes output of some statistics. I get the following output from the
 above command:
 
-  {v2, seqThreshold=30, parThreshold=35} fib 45 = 1836311903 {runtime=3.662345s}
-  <rank0@137.195.143.109> #SPARK=65   max_SPARK=20   max_THREAD=[3,3,3,3]
-  <rank0@137.195.143.109> #FISH_sent=6   #SCHED_rcvd=4
-  <rank1@137.195.143.131> #SPARK=34   max_SPARK=5   max_THREAD=[3,3,3,3]
-  <rank1@137.195.143.131> #FISH_sent=23   #SCHED_rcvd=22
-  <rank2@137.195.143.125> #SPARK=44   max_SPARK=11   max_THREAD=[3,3,3,3]
-  <rank2@137.195.143.125> #FISH_sent=11   #SCHED_rcvd=10
-  
-  real    0m4.060s
-  user    0m0.070s
-  sys     0m0.010s
+  {v2, seqThreshold=30, parThreshold=35} fib 45 = 1836311903 {runtime=3.482675s}
+  <rank0@137.195.143.109> #SPARK=55   max_SPARK=15   max_THREAD=[1,3,3,3,3]
+  <rank0@137.195.143.109> #FISH_sent=9   #SCHED_rcvd=7
+  <rank1@137.195.143.125> #SPARK=33   max_SPARK=7   max_THREAD=[1,3,3,3,3]
+  <rank1@137.195.143.125> #FISH_sent=17   #SCHED_rcvd=16
+  <rank2@137.195.143.131> #SPARK=55   max_SPARK=16   max_THREAD=[2,3,3,3,3]
+  <rank2@137.195.143.131> #FISH_sent=6   #SCHED_rcvd=5
+
+  real    0m4.032s
+  user    0m0.063s
+  sys     0m0.017s
 
 The first line is the result of the Fibonacci function, the following three
 pairs of lines report the following statistics for each node:
   #SPARKS:     sparks generated on the node
   max_SPARK:   max size of spark pool
-  max_THREAD:  list of max sizes of thread pools (one per core)
+  max_THREAD:  list of max sizes of thread pools (1 for msg handler + 1/core)
   #FISH_sent:  FISH messages sent (looking for work)
   #SCHED_rcvd: SCHEDULE messages received (carrying one spark each)
 
 The time to run the whole application (as measured by the Unix 'time' command)
-was 4 seconds and 60 milliseconds; this includes MPI and HpdH startup and
-shutdown. The runtime reported on the first line of output, 3.662345 seconds,
+was 4 seconds and 32 milliseconds; this includes MPI and HpdH startup and
+shutdown. The runtime reported on the first line of output, 3.482675 seconds,
 excludes MPI startup and shutdown time.
 
 
@@ -122,7 +121,7 @@ monads on top of 'IO':
 * 'CommM', encapsulating communication via message passing
   (module 'HdpH.Internal.Comm').
 Note that on an n-core node, there can be up to n IO threads running
-schedulers (each with their own tread pool). However, there is only
+schedulers (each with their own thread pool). However, there is only
 one spark pool, and there is one dedicated IO thread handling incoming
 messages.
 
@@ -134,8 +133,9 @@ one registry per node.
 
 Explicit closures are the data structure underlying both remote work
 distribution and remote communication. They are provided by the
-exposed module 'HdpH.Closure', which relies on 'HdpH.Internal.Static'
-for a workaround of the as yet missing 'Static' support in GHC.
+exposed module 'HdpH.Closure', which relies on 'HpdH.Internal.Closure'
+and 'HdpH.Internal.Static' for a workaround of the as yet missing
+'Static' support in GHC.
 
 Finally, 'HdpH.Internal.Location' exposes locations (aka node IDs) to
 the system. This module is at the bottom of the dependency hierarchy

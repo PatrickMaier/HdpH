@@ -18,6 +18,9 @@ module HdpH.Internal.Scheduler
     liftCommM,    -- :: CommM a -> RTS a
     liftIO,       -- :: IO a -> RTS a
 
+    -- * scheduler ID
+    schedulerID,  -- :: RTS Int
+
     -- * converting and executing threads
     mkThread,     -- :: ParM RTS a -> Thread RTS
     execThread,   -- :: Thread RTS -> RTS ()
@@ -48,7 +51,7 @@ import HdpH.Internal.Sparkpool
         readFishSentCtr, readSparkRcvdCtr, readSparkGenCtr, readMaxSparkCtr)
 import qualified HdpH.Internal.Sparkpool as Sparkpool (run)
 import HdpH.Internal.Threadpool
-       (ThreadM, forkThreadM, stealThread, readMaxThreadCtrs)
+       (ThreadM, poolID, forkThreadM, stealThread, readMaxThreadCtrs)
 import qualified HdpH.Internal.Threadpool as Threadpool
        (run, liftSparkM, liftCommM, liftIO)
 import HdpH.Internal.Type.Par (ParM, unPar, Thread(Atom), Spark)
@@ -85,8 +88,8 @@ run_ conf main = do
   unless (n > 0) $
     error "HdpH.Internal.Scheduler.run_: no schedulers"
 
-  -- allocate n empty thread pools
-  pools <- replicateM n Deque.emptyIO
+  -- allocate n+1 empty thread pools (numbered from 0 to n)
+  pools <- mapM (\ k -> do { pool <- Deque.emptyIO; return (k,pool) }) [0 .. n]
 
   -- fork nowork server (for clearing the "FISH outstanding" flag on NOWORK)
   noWorkServer <- newServer
@@ -109,14 +112,10 @@ run_ conf main = do
       rts :: Int -> ActionServer -> ThreadId -> RTS ()
       rts scheds noWorkServer wakeupServerTid = do
 
-        -- fork message handler (do not rotate thread pools)
-        -- NOTE: It is not optimal that the message handler always accesses 
-        --       the pool of one fixed scheduler; multiplexing the access in
-        --       a round robin fashion would be better and could be realised 
-        --       with an explicit circular list (via IORefs) of pools.
+        -- fork message handler (accessing thread pool 0)
         handlerTid <- forkRTS 0 handler
 
-        -- fork schedulers
+        -- fork schedulers (each accessing thread pool k, 1 <= k <= scheds)
         schedulerTids <- mapM (\ k -> forkRTS k scheduler) [1 .. scheds]
 
         -- run main RTS action
@@ -153,6 +152,11 @@ liftCommM = liftThreadM . Threadpool.liftCommM
 
 liftIO :: IO a -> RTS a
 liftIO = liftThreadM . Threadpool.liftIO
+
+
+-- Return scheduler ID, that is ID of scheduler's own thread pool.
+schedulerID :: RTS Int
+schedulerID = liftThreadM poolID
 
 
 -----------------------------------------------------------------------------

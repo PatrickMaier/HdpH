@@ -11,6 +11,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}          -- for 'GIVar'
 {-# LANGUAGE TypeSynonymInstances #-}        -- for 'Par'
 {-# LANGUAGE FlexibleInstances #-}           -- for 'Par'
+{-# LANGUAGE TemplateHaskell #-}             -- for mkClosure, etc.
 
 module HdpH
   ( -- * runtime system
@@ -42,6 +43,8 @@ module HdpH
     new,        -- :: Par (IVar a)
     put,        -- :: IVar a -> a -> Par ()
     get,        -- :: IVar a -> Par a
+    poll,       -- :: IVar a -> Par (Maybe a)
+    probe,      -- :: IVar a -> Par Bool
     glob,       -- :: IVar (Closure a) -> Par (GIVar (Closure a))
     rput,       -- :: GIVar (Closure a) -> Closure a -> Par ()
 
@@ -61,12 +64,8 @@ module HdpH
     staticAs,    -- :: a -> String -> Static a
     staticAsTD,  -- :: (Typeable t) => a -> String -> t -> Static a
 
-    -- * declaring 'Static' terms
-    StaticDecl,  -- instances: Monoid, Show
-    declare,     -- Static a -> StaticDecl
-
-    -- * registering global 'Static' declaration
-    register     -- :: StaticDecl -> IO ()
+    -- * globally registering 'Static' terms
+    register     -- :: Static a -> IO ()
   ) where
 
 import Prelude hiding (error)
@@ -85,7 +84,8 @@ import qualified HdpH.Internal.Comm as Comm
        (myNode, allNodes, isMain, shutdown)
 import qualified HdpH.Internal.IVar as IVar (IVar, GIVar)
 import HdpH.Internal.IVar
-       (hostGIVar, newIVar, putIVar, getIVar, globIVar, putGIVar)
+       (hostGIVar, newIVar, putIVar, getIVar, pollIVar, probeIVar,
+        globIVar, putGIVar)
 import HdpH.Internal.Location (NodeId)
 import HdpH.Internal.Misc (encodeLazy, decodeLazy)
 import HdpH.Internal.Scheduler
@@ -93,8 +93,7 @@ import HdpH.Internal.Scheduler
         mkThread, execThread, sendPUSH)
 import qualified HdpH.Internal.Scheduler as Scheduler (run_)
 import HdpH.Internal.Sparkpool (putSpark)
-import HdpH.Internal.Static
-       (Static, staticAs, staticAsTD, StaticDecl, declare, register)
+import HdpH.Internal.Static (Static, staticAs, staticAsTD, register)
 import HdpH.Internal.Threadpool (putThread, putThreads)
 import HdpH.Internal.Type.Par (ParM(Par), unPar, Thread(Atom))
 
@@ -133,7 +132,7 @@ at (GIVar gv) = hostGIVar gv
 -- in the 'conf' argument.
 runRTS_ :: RTSConf -> RTS () -> IO ()
 runRTS_ conf action = do Closure.registerStatic
-                         register putgStaticDecl
+                         register $(static 'rput_abs)
                          Scheduler.run_ conf action
 
 -- Return True iff this node is the root (or main) node.
@@ -154,6 +153,8 @@ shutdownRTS = liftCommM Comm.shutdown
 --       'resumption monads' [3]. Try to rewrite the definitions here
 --       and in HdpH.Internal.Type.Par to make Par a resumption monad.
 --       [3] Harrison "The Essence of Multitasking". AMAST 2006.
+-- ANSWER: Would actually need to make Par into a reactive resumption monad,
+--         which is not very different from the current continuation style.
 
 -- 'Par' is a type synonym hiding the RTS parameter; a newtype would be
 -- nicer but the resulting wrapping and unwrapping destroys readability
@@ -168,6 +169,8 @@ instance Functor Par where
 -- TODO: Test whether strictness is still necessary; it was prior to v0.3.0 
 --       to ensure thread actions were actually executed; differences
 --       in the action type may render it unnecessary.
+-- ANSWER: Strictness is not necessary now, but it does increase performance
+--         marginally.
 instance Monad Par where
     return a = Par $ \ c -> c $! a
     m >>= k  = Par $ \ c -> unPar m $ \ a -> unPar (k $! a) c
@@ -266,31 +269,24 @@ get :: IVar a -> Par a
 get (IVar v) = Par $ \ c -> Atom $ liftIO (getIVar v c) >>=
                                    maybe (return Nothing) (return . Just . c)
 
+-- polling the value of an IVar; non-blocking
+poll :: IVar a -> Par (Maybe a)
+poll (IVar v) = atom $ liftIO (pollIVar v)
+
+-- probing whether an IVar is full; non-blocking
+probe :: IVar a -> Par Bool
+probe (IVar v) = atom $ liftIO (probeIVar v)
+
 -- globalise IVar (of Closure type)
 glob :: IVar (Closure a) -> Par (GIVar (Closure a))
 glob (IVar v) = GIVar <$> atom (liftIO $ globIVar v)
 
 -- remote write to global IVar (of Closure type)
 rput :: GIVar (Closure a) -> Closure a -> Par ()
-rput gv clo = pushTo (unsafeMkClosure val fun env) (at gv)
-  where
-    val = putg gv clo
-    env = encodeLazy (gv, clo)
-    fun = putgStatic
+rput gv clo = pushTo $(mkClosure [| rput_abs (gv, clo) |]) (at gv)
 
 -- write to locally hosted global IVar; don't export
-putg :: GIVar (Closure a) -> Closure a -> Par ()
-putg (GIVar gv) clo = atom $ liftIO (putGIVar gv clo) >>=
-                             liftThreadM . putThreads
-
--- 'Static' wrapper around 'putg'; don't export
-putgStatic :: Static (Env -> Par ())
-putgStatic = staticAs
-  (\ env -> let (gv, clo) = decodeLazy env
-              in putg gv clo)
-  "HdpH.putg"
-
--- declaration of 'Static' wrapper around 'putg'; don't export;
--- will be registered before running RTS
-putgStaticDecl :: StaticDecl
-putgStaticDecl = declare putgStatic
+{-# INLINE rput_abs #-}
+rput_abs :: (GIVar (Closure a), Closure a) -> Par ()
+rput_abs (GIVar gv, clo) = atom $ liftIO (putGIVar gv clo) >>=
+                                  liftThreadM . putThreads

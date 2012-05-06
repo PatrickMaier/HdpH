@@ -6,8 +6,9 @@
 --
 -----------------------------------------------------------------------------
 
-{-# LANGUAGE ScopedTypeVariables #-}  -- req'd for phantom type annotations
-{-# LANGUAGE FlexibleInstances #-}    -- req'd for some DecodeStatic instances
+{-# LANGUAGE ScopedTypeVariables #-}  -- req'd for type annotations
+{-# LANGUAGE FlexibleInstances #-}    -- req'd for some StaticId instances
+{-# LANGUAGE TemplateHaskell #-}      -- req'd for mkClosure, etc
 
 module HdpH.Strategies
   ( -- * Strategy type and application
@@ -19,16 +20,29 @@ module HdpH.Strategies
     rseq,          -- :: Strategy a
     rdeepseq,      -- :: (NFData a) => Strategy a
 
-    -- * basic closure strategies
-    forceClosure,  -- :: (NFData a, DecodeStatic a) => Strategy (Closure a)
+    -- * "fully forcing" closure strategy
+    forceClosure,          -- :: (NFData a, StaticId a) => Strategy (Closure a)
+    forceClosureClosure,   -- :: (StaticForceClosure a)
+                           -- => Closure (Strategy (Closure a))
+    StaticForceClosure(    -- context: NFData, StaticId
+      staticForceClosureTD   -- :: a -> Static (Env -> Strategy (Closure a))
+    ),
+
+    -- * proto-strategies for generating parallelism
     sparkClosure,  -- :: Closure (Strategy (Closure a)) ->
                    --      (Closure a -> Par (IVar (Closure a)))
+    pushClosure,   -- :: Closure (Strategy (Closure a)) -> NodeId ->
+                   --     (Closure a -> Par (IVar (Closure a)))
 
     -- * list strategies
     evalList,               -- :: Strategy a -> Strategy [a]
     evalClosureListClosure, -- :: Strategy (Closure a) ->
                             --      Strategy (Closure [Closure a])
     parClosureList,         -- :: Closure (Strategy (Closure a)) ->
+                            --      Strategy [Closure a]
+    pushClosureList,        -- :: Closure (Strategy (Closure a)) -> [NodeId] ->
+                            --      Strategy [Closure a]
+    pushRandClosureList,    -- :: Closure (Strategy (Closure a)) -> [NodeId] ->
                             --      Strategy [Closure a]
 
     -- * clustering strategies
@@ -48,75 +62,144 @@ module HdpH.Strategies
                               -- -> Strategy [Closure a]
 
     -- * task farm skeletons
-    parMap,          -- :: (DecodeStatic a)
+    parMap,          -- :: (StaticId a)
                      -- => Closure (Strategy (Closure b))
                      -- -> Closure (a -> b)
                      -- -> [a]
                      -- -> Par [b]
-    parMapNF,        -- :: forall a b . (DecodeStatic a, ForceClosureStatic b)
+    parMapNF,        -- :: (StaticId a, StaticForceClosure b)
                      -- => Closure (a -> b)
                      -- -> [a]
                      -- -> Par [b]
-    parMapChunked,   -- :: (DecodeStatic a)
+    parMapChunked,   -- :: (StaticId a)
                      -- => Int
                      -- -> Closure (Strategy (Closure b))
                      -- -> Closure (a -> b)
                      -- -> [a]
                      -- -> Par [b]
-    parMapChunkedNF, -- :: forall a b . (DecodeStatic a, ForceClosureStatic b)
+    parMapChunkedNF, -- :: (StaticId a, StaticForceClosure b)
                      -- => Int
                      -- -> Closure (a -> b)
                      -- -> [a]
                      -- -> Par [b]
-    parMapSliced,    -- :: (DecodeStatic a)
+    parMapSliced,    -- :: (StaticId a)
                      -- => Int
                      -- -> Closure (Strategy (Closure b))
                      -- -> Closure (a -> b)
                      -- -> [a]
                      -- -> Par [b]
-    parMapSlicedNF,  -- :: forall a b . (DecodeStatic a, ForceClosureStatic b)
+    parMapSlicedNF,  -- :: (StaticId a, StaticForceClosure b)
                      -- => Int
                      -- -> Closure (a -> b)
                      -- -> [a]
                      -- -> Par [b]
+    parClosureMapM,  -- :: Closure (Closure a -> Par (Closure b))
+                     -- -> [Closure a]
+                     -- -> Par [Closure b]
+    parMapM,         -- :: (StaticId a)
+                     -- => Closure (a -> Par (Closure b))
+                     -- -> [a]
+                     -- -> Par [b]
+    parMapM_,        -- :: (StaticId a)
+                     -- => Closure (a -> Par ())
+                     -- -> [a]
+                     -- -> Par ()
+    pushMap,         -- :: (StaticId a)
+                     -- => Closure (Strategy (Closure b))
+                     -- -> [NodeId]
+                     -- -> Closure (a -> b)
+                     -- -> [a]
+                     -- -> Par [b]
+    pushMapNF,       -- :: (StaticId a, StaticForceClosure b)
+                     -- => [NodeId]
+                     -- -> Closure (a -> b)
+                     -- -> [a]
+                     -- -> Par [b]
+    pushClosureMapM, -- :: [NodeId]
+                     -- -> Closure (Closure a -> Par (Closure b))
+                     -- -> [Closure a]
+                     -- -> Par [Closure b]
+    pushMapM,        -- :: (StaticId a)
+                     -- => [NodeId]
+                     -- -> Closure (a -> Par (Closure b))
+                     -- -> [a]
+                     -- -> Par [b]
+    pushMapM_,       -- :: (StaticId a)
+                     -- => [NodeId]
+                     -- -> Closure (a -> Par ())
+                     -- -> [a]
+                     -- -> Par ()
+    pushRandClosureMapM, -- :: [NodeId]
+                         -- -> Closure (Closure a -> Par (Closure b))
+                         -- -> [Closure a]
+                         -- -> Par [Closure b]
+    pushRandMapM,        -- :: (StaticId a)
+                         -- => [NodeId]
+                         -- -> Closure (a -> Par (Closure b))
+                         -- -> [a]
+                         -- -> Par [b]
+    pushRandMapM_,       -- :: (StaticId a)
+                         -- => [NodeId]
+                         -- -> Closure (a -> Par ())
+                         -- -> [a]
+                         -- -> Par ()
 
-    -- * static closure forcing functions
-    ForceClosureStatic(       -- context: NFData, DecodeStatic
-      forceClosureStatic      -- :: Static (Env -> Strategy (Closure a))    
-    ),
+    -- * divide and conquer skeletons
+    parDivideAndConquer,  -- :: Closure (Closure a -> Bool)
+                          -- -> Closure (Closure a -> Par (Closure b))
+                          -- -> Closure (Closure a -> [Closure a])
+                          -- -> Closure (Closure a -> [Closure b] -> Closure b)
+                          -- -> Closure a
+                          -- -> Par (Closure b)
+    pushDivideAndConquer, -- :: [NodeId]
+                          -- -> Closure (Closure a -> Bool)
+                          -- -> Closure (Closure a -> Par (Closure b))
+                          -- -> Closure (Closure a -> [Closure a])
+                          -- -> Closure (Closure a -> [Closure b] -> Closure b)
+                          -- -> Closure a
+                          -- -> Par (Closure b)
 
-    -- * Static declaration and registration
+    -- * Static registration
     registerStatic  -- :: IO ()
   ) where
 
 import Prelude
-import Control.DeepSeq (NFData, rnf)
+import Control.DeepSeq (NFData, deepseq)
+import Control.Monad (zipWithM, zipWithM_)
+import Data.Functor ((<$>))
 import Data.List (transpose)
-import Data.Monoid (mconcat)
+import System.Random (randomRIO)
 
-import HdpH (Par, spark, new, get, glob, rput,
-             IVar, GIVar,
+import HdpH (Par, io, force, fork, pushTo, spark, new, get, glob, rput,
+             NodeId, IVar, GIVar,
              Env, encodeEnv, decodeEnv,
-             Closure, toClosure, unsafeMkClosure, unsafeMkClosure0, unClosure,
-             mapClosure,
-             DecodeStatic, decodeStatic,
-             Static, staticAs, staticAsTD, declare, register)
-import qualified HdpH.Closure as Closure (forceClosure, registerStatic)
+             Closure, unClosure, toClosure, mapClosure, mkClosure, mkClosureTD,
+             Static, register, static, static_, staticTD_,
+             StaticId, staticIdTD)
+import qualified HdpH.Closure as Closure (registerStatic)
 
 
 -----------------------------------------------------------------------------
--- 'Static' declaration and registration
+-- 'Static' registration
 
--- 'DecodeStatic' instance req'd for 'evalClosureListClosure'
-instance DecodeStatic [Closure a]
+-- 'StaticId' instance req'd for 'evalClosureListClosure'
+instance StaticId [Closure a]
+
+-- 'StaticForceClosure' instance for explicit closures
+instance StaticForceClosure (Closure a)
 
 registerStatic :: IO ()
 registerStatic = do
   Closure.registerStatic  -- repeat static reg of imported modules
-  register $ mconcat
-    [declare (decodeStatic :: Static (Env -> [Closure a])),
-     declare sparkClosureStatic,
-     declare evalClosureListClosureStatic]
+  register $ staticIdTD (undefined :: [Closure a])
+  register $ staticForceClosureTD (undefined :: Closure a)
+  register $(static 'sparkClosure_abs)
+  register $(static 'pushClosure_abs)
+  register $(static 'parClosureMapM_abs)
+  register $(static 'parMapM_abs)
+  register $(static_ 'evalClosureListClosure)
+  register $(static 'parDivideAndConquer_abs)
+  register $(static 'pushDivideAndConquer_abs)
 
 
 -----------------------------------------------------------------------------
@@ -144,16 +227,47 @@ rseq x = x `seq` return x -- Order of eval irrelevant due to 2nd arg converging
 
 -- "evaluate fully" strategy
 rdeepseq :: (NFData a) => Strategy a
-rdeepseq x = rnf x `seq` return x  -- Order of eval irrelevant (2nd arg conv)
+rdeepseq x = x `deepseq` return x  -- Order of eval irrelevant (2nd arg conv)
 
 
 -----------------------------------------------------------------------------
--- basic closure strategies
-
 -- "fully forcing" closure strategy
-forceClosure :: (NFData a, DecodeStatic a) => Strategy (Closure a)
-forceClosure clo = clo' `seq` return clo'  -- Order of eval irrelevant, again
-  where clo' = Closure.forceClosure clo
+
+-- "fully forcing" (ie. fully normalising the thunk inside) closure strategy;
+-- note that 'forceClosure clo' does not have the same effect as
+-- * 'deepseq'ing 'clo' (because 'forceClosure' changes the closure 
+--    representation), or
+-- * 'deepseq'ing 'toClosure $ unClosure clo' (because 'forceClosure'
+--   does not force the serialised environment of its result), or
+-- * 'deepseq'ing 'clo' and returning 'toClosure $ unClosure clo' (because
+--   this does hang on to the old closure environment whereas 'forceClosure' 
+--   gives up the old environment.
+-- NB: An 'evalClosure' variant that evaluates the thunk inside head-strictly 
+--     does not make sense. Serialising such a closure would turn it into a
+--     fully evaluated one.
+forceClosure :: (NFData a, StaticId a) => Strategy (Closure a)
+forceClosure clo = unClosure clo' `deepseq` return clo'  -- Order of eval irrel
+                     where clo' = toClosure $ unClosure clo
+
+
+-- Static deserialisers corresponding to "fully forcing" closure strategy.
+-- NOTE: Do not override default class methods when instantiating.
+class (NFData a, StaticId a) => StaticForceClosure a where
+  -- static closure forcing strategy to be registered for every class instance;
+  -- argument seerves as type discriminator but is never evaluated
+  staticForceClosureTD :: a -> Static (Env -> Strategy (Closure a))
+  staticForceClosureTD typearg = $(staticTD_ 'forceClosure) typearg
+
+
+-- closure wrapping "fully forcing" closure strategy
+forceClosureClosure :: forall a . (StaticForceClosure a)
+                    => Closure (Strategy (Closure a))
+forceClosureClosure = $(mkClosureTD [| forceClosure |]) (undefined :: a)
+                      -- NOTE: passing 'undefined' as a typearg
+
+
+-----------------------------------------------------------------------------
+-- proto-strategies for generating parallelism
 
 -- sparking strategy combinator, converting a strategy into a kind of
 -- "future strategy"; note that strategy argument must be a closure itself
@@ -162,19 +276,35 @@ sparkClosure :: Closure (Strategy (Closure a)) ->
 sparkClosure clo_strat clo = do
   v <- new
   gv <- glob v
-  let val = (clo `using` unClosure clo_strat) >>= rput gv
-  let env = encodeEnv (clo, clo_strat, gv)
-  let fun = sparkClosureStatic
-  spark $ unsafeMkClosure val fun env
+  spark $(mkClosure [| sparkClosure_abs (clo, clo_strat, gv) |])
   return v
 
-sparkClosureStatic :: forall a . Static (Env -> Par ())
-sparkClosureStatic = staticAs
-  (\ env -> let (clo       :: Closure a                     ,
-                 clo_strat :: Closure (Strategy (Closure a)),
-                 gv        :: GIVar (Closure a)             ) = decodeEnv env
-              in (clo `using` unClosure clo_strat) >>= rput gv)
-  "HdpH.Strategies.sparkClosure"
+sparkClosure_abs :: (Closure a, 
+                     Closure (Strategy (Closure a)), 
+                     GIVar (Closure a))
+                 -> Par ()
+sparkClosure_abs (clo, clo_strat, gv) =
+  (clo `using` unClosure clo_strat) >>= rput gv
+
+
+-- pushing strategy combinator, converting a strategy into a kind of
+-- "future strategy"; note that strategy argument must be a closure itself;
+-- note also that the pushed closure is executed in a new thread (rather
+-- than inline in the scheduler)
+pushClosure :: Closure (Strategy (Closure a)) -> NodeId ->
+                 (Closure a -> Par (IVar (Closure a)))
+pushClosure clo_strat node clo = do
+  v <- new
+  gv <- glob v
+  pushTo $(mkClosure [| pushClosure_abs (clo, clo_strat, gv) |]) node
+  return v
+
+pushClosure_abs :: (Closure a, 
+                    Closure (Strategy (Closure a)), 
+                    GIVar (Closure a))
+                -> Par ()
+pushClosure_abs (clo, clo_strat, gv) =
+  fork $ (clo `using` unClosure clo_strat) >>= rput gv
 
 
 ------------------------------------------------------------------------------
@@ -193,7 +323,7 @@ evalList strat (x:xs) = do x' <- strat x
 evalClosureListClosure :: Strategy (Closure a) ->
                             Strategy (Closure [Closure a])
 evalClosureListClosure strat clo =
-  toClosure `fmap` (unClosure clo `using` evalList strat)
+  toClosure <$> (unClosure clo `using` evalList strat)
 
 
 -- parallel list strategy combinator;
@@ -204,19 +334,41 @@ parClosureList clo_strat xs = mapM (sparkClosure clo_strat) xs >>=
                               mapM get
 
 
+-- parallel list strategy combinator, pushing in round-robin fashion;
+-- * stratgy argument must be a closure,
+-- * expects list of nodes and list of closures
+pushClosureList :: Closure (Strategy (Closure a)) -> [NodeId] ->
+                     Strategy [Closure a]
+pushClosureList clo_strat nodes xs =
+  zipWithM (pushClosure clo_strat) (cycle nodes) xs >>=
+  mapM get
+
+
+-- parallel list strategy combinator, pushing to random nodes;
+-- * stratgy argument must be a closure,
+-- * expects list of nodes and list of closures
+pushRandClosureList :: Closure (Strategy (Closure a)) -> [NodeId] ->
+                         Strategy [Closure a]
+pushRandClosureList clo_strat nodes xs =
+  mapM (\ x -> do { node <- rand; pushClosure clo_strat node x}) xs >>=
+  mapM get
+    where
+      rand :: Par NodeId
+      rand = (nodes !!) <$> io (randomRIO (0, length nodes - 1))
+
+
 ------------------------------------------------------------------------------
 -- clustering strategies
 
 -- generic clustering strategy combinator
 evalClusterBy :: (a -> b) -> (b -> a) -> Strategy b -> Strategy a
 evalClusterBy cluster uncluster strat x =
-  uncluster `fmap` (cluster x `using` strat)
+  uncluster <$> (cluster x `using` strat)
 
 
 -- generic parallel clustering strategy combinator for lists of closures
 -- (clustering to lists of closures, again)
-parClosureListClusterBy :: forall a .
-                           ([Closure a] -> [[Closure a]])
+parClosureListClusterBy :: ([Closure a] -> [[Closure a]])
                         -> ([[Closure a]] -> [Closure a])
                         -> Closure (Strategy (Closure a))
                         -> Strategy [Closure a]
@@ -224,20 +376,11 @@ parClosureListClusterBy cluster uncluster clo_strat =
   evalClusterBy cluster' uncluster' strat'
     where cluster'   = map toClosure . cluster
           uncluster' = uncluster . map unClosure
-          strat' :: Strategy [Closure [Closure a]]
+       -- strat' :: Strategy [Closure [Closure a]]
           strat' = parClosureList clo_strat''
-          clo_strat'' :: Closure (Strategy (Closure [Closure a]))
-          clo_strat'' = mapClosure clo_eCL clo_strat
-            where clo_eCL = unsafeMkClosure0 val fun
-                  val = evalClosureListClosure
-                  fun = evalClosureListClosureStatic
-
-evalClosureListClosureStatic :: Static (Env ->
-                                        Strategy (Closure a) ->
-                                        Strategy (Closure [Closure a]))
-evalClosureListClosureStatic = staticAs
-  (const evalClosureListClosure)                              
-  "HdpH.Strategies.evalClosureListClosure"
+       -- clo_strat'' :: Closure (Strategy (Closure [Closure a]))
+          clo_strat'' =
+            mapClosure $(mkClosure [| evalClosureListClosure |]) clo_strat
 
 
 -- chunking and slicing parallel clustering strategy combinators
@@ -271,25 +414,10 @@ unslice = concat . transpose
 
 
 ------------------------------------------------------------------------------
--- static closure forcing functions
-
--- class of static closure forcers
-class (NFData a, DecodeStatic a) => ForceClosureStatic a where
-  forceClosureStatic :: Static (Env -> Strategy (Closure a))
-  forceClosureStatic = staticAsTD 
-    (const forceClosure) 
-    "HdpH.Strategies.forceClosure"
-    (undefined :: a)
-
--- NOTE: Every 'ForceClosureStatic' instance also needs to be registered by
---       the 'declareStatic' function (cf. 'DecodeStatic' instances).
-
-
-------------------------------------------------------------------------------
 -- skeletons
 
 -- task farm with parameterised by a strategy
-parMap :: (DecodeStatic a)
+parMap :: (StaticId a)
        => Closure (Strategy (Closure b))
        -> Closure (a -> b)
        -> [a]
@@ -301,18 +429,16 @@ parMap clo_strat clo_f xs =
              clo_xs = map toClosure xs
 
 -- "fully forcing" task farm
-parMapNF :: forall a b . (DecodeStatic a, ForceClosureStatic b)
+parMapNF :: (StaticId a, StaticForceClosure b)
          => Closure (a -> b)
          -> [a]
          -> Par [b]
-parMapNF = parMap clo_strat
-  where val = forceClosure :: Strategy (Closure b)
-        fun = forceClosureStatic
-        clo_strat = unsafeMkClosure0 val fun
+parMapNF = parMap forceClosureClosure
+
 
 
 -- chunking task farm
-parMapChunked :: (DecodeStatic a)
+parMapChunked :: (StaticId a)
               => Int
               -> Closure (Strategy (Closure b))
               -> Closure (a -> b)
@@ -325,19 +451,16 @@ parMapChunked n clo_strat clo_f xs =
              clo_xs = map toClosure xs
 
 -- "fully forcing" chunking task farm
-parMapChunkedNF :: forall a b . (DecodeStatic a, ForceClosureStatic b)
+parMapChunkedNF :: (StaticId a, StaticForceClosure b)
                 => Int
                 -> Closure (a -> b)
                 -> [a]
                 -> Par [b]
-parMapChunkedNF n = parMapChunked n clo_strat
-  where val = forceClosure :: Strategy (Closure b)
-        fun = forceClosureStatic
-        clo_strat = unsafeMkClosure0 val fun
+parMapChunkedNF n = parMapChunked n forceClosureClosure
 
 
 -- slicing task farm
-parMapSliced :: (DecodeStatic a)
+parMapSliced :: (StaticId a)
              => Int
              -> Closure (Strategy (Closure b))
              -> Closure (a -> b)
@@ -350,12 +473,270 @@ parMapSliced n clo_strat clo_f xs =
              clo_xs = map toClosure xs
 
 -- "fully forcing" slicing task farm
-parMapSlicedNF :: forall a b . (DecodeStatic a, ForceClosureStatic b)
+parMapSlicedNF :: (StaticId a, StaticForceClosure b)
                => Int
                -> Closure (a -> b)
                -> [a]
                -> Par [b]
-parMapSlicedNF n = parMapSliced n clo_strat
-  where val = forceClosure :: Strategy (Closure b)
-        fun = forceClosureStatic
-        clo_strat = unsafeMkClosure0 val fun
+parMapSlicedNF n = parMapSliced n forceClosureClosure
+
+
+-- monadic task farms
+parClosureMapM :: Closure (Closure a -> Par (Closure b))
+               -> [Closure a]
+               -> Par [Closure b]
+parClosureMapM clo_f clo_xs =
+  do vs <- mapM spawn clo_xs
+     mapM get vs
+       where
+         spawn clo_x = do
+           v <- new
+           gv <- glob v
+           spark $(mkClosure [| parClosureMapM_abs (clo_f, clo_x, gv) |])
+           return v
+
+parClosureMapM_abs :: (Closure (Closure a -> Par (Closure b)),
+                       Closure a,
+                       GIVar (Closure b))
+                   -> Par ()
+parClosureMapM_abs (clo_f, clo_x, gv) = unClosure clo_f clo_x >>= rput gv
+
+
+parMapM :: (StaticId a)
+        => Closure (a -> Par (Closure b))
+        -> [a]
+        -> Par [b]
+parMapM clo_f xs =
+  do vs <- mapM spawn xs
+     mapM (\ v -> unClosure <$> get v) vs
+       where
+         spawn x = do
+           let clo_x = toClosure x
+           v <- new
+           gv <- glob v
+           spark $(mkClosure [| parMapM_abs (clo_f, clo_x, gv) |])
+           return v
+
+parMapM_abs :: (Closure (a -> Par (Closure b)), 
+                Closure a, 
+                GIVar (Closure b)) 
+            -> Par ()
+parMapM_abs (clo_f, clo_x, gv) = unClosure (mapClosure clo_f clo_x) >>= rput gv
+
+
+parMapM_ :: (StaticId a)
+         => Closure (a -> Par ())
+         -> [a]
+         -> Par ()
+parMapM_ clo_f xs = mapM_ (spark . mapClosure clo_f . toClosure) xs
+
+
+-- eagerly pushing task farm; round robin work distribution
+pushMap :: (StaticId a)
+        => Closure (Strategy (Closure b))
+        -> [NodeId]
+        -> Closure (a -> b)
+        -> [a]
+        -> Par [b]
+pushMap clo_strat nodes clo_f xs =
+  do clo_ys <- map f clo_xs `using` pushClosureList clo_strat nodes
+     return $ map unClosure clo_ys
+       where f = mapClosure clo_f
+             clo_xs = map toClosure xs
+
+-- "fully forcing" task farm; round robin work distribution by pushing eagerly
+pushMapNF :: (StaticId a, StaticForceClosure b)
+          => [NodeId]
+          -> Closure (a -> b)
+          -> [a]
+          -> Par [b]
+pushMapNF = pushMap forceClosureClosure
+
+
+-- eagerly pushing monadic task farms; round robin work distribution
+pushClosureMapM :: [NodeId]
+                -> Closure (Closure a -> Par (Closure b))
+                -> [Closure a]
+                -> Par [Closure b]
+pushClosureMapM nodes clo_f clo_xs =
+  do vs <- zipWithM spawn (cycle nodes) clo_xs
+     mapM get vs
+       where
+         spawn node clo_x = do
+           v <- new
+           gv <- glob v
+           pushTo $(mkClosure [| parClosureMapM_abs (clo_f, clo_x, gv) |]) node
+           return v
+
+
+pushMapM :: (StaticId a)
+         => [NodeId]
+         -> Closure (a -> Par (Closure b))
+         -> [a]
+         -> Par [b]
+pushMapM nodes clo_f xs =
+  do vs <- zipWithM spawn (cycle nodes) xs
+     mapM (\ v -> unClosure <$> get v) vs
+       where
+         spawn node x = do
+           let clo_x = toClosure x
+           v <- new
+           gv <- glob v
+           pushTo $(mkClosure [| parMapM_abs (clo_f, clo_x, gv) |]) node
+           return v
+
+
+pushMapM_ :: (StaticId a)
+          => [NodeId]
+          -> Closure (a -> Par ())
+          -> [a]
+          -> Par ()
+pushMapM_ nodes clo_f xs =
+  zipWithM_
+    (\ node x -> pushTo (mapClosure clo_f $ toClosure x) node)
+    (cycle nodes)
+    xs
+
+
+-- eagerly pushing monadic task farms; random work distribution
+pushRandClosureMapM :: [NodeId]
+                    -> Closure (Closure a -> Par (Closure b))
+                    -> [Closure a]
+                    -> Par [Closure b]
+pushRandClosureMapM nodes clo_f clo_xs =
+  do vs <- mapM spawn clo_xs
+     mapM get vs
+       where
+         rand = (nodes !!) <$> io (randomRIO (0, length nodes - 1))
+         spawn clo_x = do
+           v <- new
+           gv <- glob v
+           node <- rand
+           pushTo $(mkClosure [| parClosureMapM_abs (clo_f, clo_x, gv) |]) node
+           return v
+
+
+pushRandMapM :: (StaticId a)
+             => [NodeId]
+             -> Closure (a -> Par (Closure b))
+             -> [a]
+             -> Par [b]
+pushRandMapM nodes clo_f xs =
+  do vs <- mapM spawn xs
+     mapM (\ v -> unClosure <$> get v) vs
+       where
+         rand = (nodes !!) <$> io (randomRIO (0, length nodes - 1))
+         spawn x = do
+           let clo_x = toClosure x
+           v <- new
+           gv <- glob v
+           node <- rand
+           pushTo $(mkClosure [| parMapM_abs (clo_f, clo_x, gv) |]) node
+           return v
+
+
+pushRandMapM_ :: (StaticId a)
+              => [NodeId]
+              -> Closure (a -> Par ())
+              -> [a]
+              -> Par ()
+pushRandMapM_ nodes clo_f xs =
+  mapM_ spawn xs
+    where
+      rand = (nodes !!) <$> io (randomRIO (0, length nodes - 1))
+      spawn x = do
+        node <- rand
+        pushTo (mapClosure clo_f $ toClosure x) node
+
+
+-- generic divide and conquer skeletons
+divideAndConquer :: (a -> Bool)      -- trivial
+                 -> (a -> b)         -- simplySolve
+                 -> (a -> [a])       -- decompose
+                 -> (a -> [b] -> b)  -- combineSolutions
+                 -> a                -- problem
+                 -> b
+divideAndConquer trivial simplySolve decompose combineSolutions problem
+  | trivial problem = simplySolve problem
+  | otherwise =
+      combineSolutions problem $
+      map solveRec
+      (decompose problem)
+        where
+          solveRec = divideAndConquer
+                       trivial
+                       simplySolve
+                       decompose
+                       combineSolutions
+
+
+-- lazy work distribution
+parDivideAndConquer :: Closure (Closure a -> Bool)                     -- trivial
+                    -> Closure (Closure a -> Par (Closure b))          -- simplySolve
+                    -> Closure (Closure a -> [Closure a])              -- decompose
+                    -> Closure (Closure a -> [Closure b] -> Closure b) -- combineSolutions
+                    -> Closure a                                       -- problem
+                    -> Par (Closure b)
+parDivideAndConquer trivial simplySolve decompose combineSolutions problem
+  | trivial' problem = simplySolve' problem
+  | otherwise =
+      combineSolutions' problem <$>
+      parClosureMapM solveRec_clo
+      (decompose' problem)
+        where
+          trivial'          = unClosure trivial
+          simplySolve'      = unClosure simplySolve
+          decompose'        = unClosure decompose
+          combineSolutions' = unClosure combineSolutions
+          solveRec_clo = $(mkClosure
+                           [| parDivideAndConquer_abs
+                                (trivial,
+                                 simplySolve,
+                                 decompose,
+                                 combineSolutions) |])
+
+parDivideAndConquer_abs :: (Closure (Closure a -> Bool),
+                            Closure (Closure a -> Par (Closure b)),
+                            Closure (Closure a -> [Closure a]),
+                            Closure (Closure a -> [Closure b] -> Closure b))
+                        -> Closure a -> Par (Closure b)
+parDivideAndConquer_abs (trivial, simplySolve, decompose, combineSolutions) =
+  parDivideAndConquer trivial simplySolve decompose combineSolutions
+
+
+
+-- eager, random work distribution
+pushDivideAndConquer :: [NodeId]
+                     -> Closure (Closure a -> Bool)                     -- trivial
+                     -> Closure (Closure a -> Par (Closure b))          -- simplySolve
+                     -> Closure (Closure a -> [Closure a])              -- decompose
+                     -> Closure (Closure a -> [Closure b] -> Closure b) -- combineSolutions
+                     -> Closure a                                       -- problem
+                     -> Par (Closure b)
+pushDivideAndConquer nodes trivial simplySolve decompose combineSolutions problem
+  | trivial' problem = simplySolve' problem
+  | otherwise =
+      combineSolutions' problem <$>
+      pushRandClosureMapM nodes solveRec_clo
+      (decompose' problem)
+        where
+          trivial'          = unClosure trivial
+          simplySolve'      = unClosure simplySolve
+          decompose'        = unClosure decompose
+          combineSolutions' = unClosure combineSolutions
+          solveRec_clo = $(mkClosure
+                           [| pushDivideAndConquer_abs
+                                (nodes,
+                                 trivial,
+                                 simplySolve,
+                                 decompose,
+                                 combineSolutions) |])
+
+pushDivideAndConquer_abs :: ([NodeId],
+                             Closure (Closure a -> Bool),
+                             Closure (Closure a -> Par (Closure b)),
+                             Closure (Closure a -> [Closure a]),
+                             Closure (Closure a -> [Closure b] -> Closure b))
+                         -> Closure a -> Par (Closure b)
+pushDivideAndConquer_abs (nodes, trivial, simplySolve, decompose, combineSolutions) =
+  pushDivideAndConquer nodes trivial simplySolve decompose combineSolutions

@@ -76,8 +76,15 @@ import HdpH.Internal.State.GRef (regRef)
 mkGRef :: NodeId -> Integer -> GRef a
 mkGRef node i = rnf node `seq` rnf i `seq` GRef { slot = i, at = node }
 
-deriving instance Eq (GRef a)
-deriving instance Ord (GRef a)
+instance Eq (GRef a) where
+  ref1 == ref2 = slot ref1 == slot ref2 && at ref1 == at ref2
+
+instance Ord (GRef a) where
+  compare ref1 ref2 = case compare (slot ref1) (slot ref2) of
+                        LT -> LT
+                        GT -> GT
+                        EQ -> compare (at ref1) (at ref2)
+
 
 -- Show instance (mainly for debugging)
 instance Show (GRef a) where

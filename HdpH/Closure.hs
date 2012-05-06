@@ -1,5 +1,7 @@
--- Closure representation, inspired by
+-- Closure representation, inspired by [1] and refined by [2].
 --   [1] Epstein et al. "Haskell for the cloud". Haskell Symposium 2011.
+--   [2] Maier, Trinder. "Implementing a High-level Distributed-Memory
+--       Parallel Haskell in Haskell". IFL 2011.
 --
 -- Visibility: public
 -- Author: Patrick Maier <P.Maier@hw.ac.uk>
@@ -7,37 +9,50 @@
 --
 -----------------------------------------------------------------------------
 
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE DeriveDataTypeable #-}
+-- This module implements /explicit closures/ as described in [2].
+-- It makes extensive use of Template Haskell, and due to TH's stage
+-- restrictions, internals like the actual closure representation are
+-- delegated to module 'HdpH.Internal.Closure'.
+
+
 {-# LANGUAGE ScopedTypeVariables #-}  -- req'd for phantom type annotations
+{-# LANGUAGE TemplateHaskell #-}
 
 module HdpH.Closure
   ( -- * serialised environment
-    Env,       -- synonym: Data.ByteString.Lazy.ByteString
-    encodeEnv, -- :: (Serialize a) => a -> Env
-    decodeEnv, -- :: (Serialize a) => Env -> a
+    Env,              -- synonym: Data.ByteString.Lazy.ByteString
+    encodeEnv,        -- :: (Serialize a) => a -> Env
+    decodeEnv,        -- :: (Serialize a) => Env -> a
+
+    -- * static deserializers
+    StaticId(         -- context: Serialize, Typeable
+      staticIdTD        -- :: a -> Static (Env -> a)
+    ),
 
     -- * Closure type constructor
-    Closure,   -- instances: Eq, Ord, Show, NFData, Serialize, Typeable
+    Closure,          -- instances: Show, NFData, Serialize, Typeable
 
     -- * introducing and eliminating closures
-    toClosure,        -- :: (DecodeStatic a) => a -> Closure a
     unsafeMkClosure,  -- :: a -> Static (Env -> a) -> Env -> Closure a
-    unsafeMkClosure0, -- :: a -> Static (Env -> a) -> Closure a
     unClosure,        -- :: Closure a -> a
 
-    -- * forcing closures
-    forceClosure,  -- :: (NFData a, DecodeStatic a) => Closure a -> Closure a
+    -- * Template Haskell macros for closure construction
+    mkClosure,        -- :: ExpQ -> ExpQ
+    mkClosureTD,      -- :: ExpQ -> ExpQ
+
+    -- * macros for registering static deserializers used in closure cons
+    static,           -- :: Name -> ExpQ
+    staticTD,         -- :: Name -> ExpQ
+    static_,          -- :: Name -> ExpQ
+    staticTD_,        -- :: Name -> ExpQ
+
+    -- * closure conversion for values
+    toClosure,        -- :: (StaticId a) => a -> Closure a
 
     -- * categorical operations on function closures
     idClosure,   -- :: Closure (a -> a)
     compClosure, -- :: Closure (b -> c) -> Closure (a -> b) -> Closure (a -> c)
     mapClosure,  -- :: Closure (a -> b) -> Closure a -> Closure b
-
-    -- * static deserialisers
-    DecodeStatic(   -- context: Serialize, Typeable
-      decodeStatic  -- :: Static (Env -> a)
-    ),
 
     -- * Static declaration and registration;
     --   exported to top-level module 'HdpH' but not re-exported by 'HdpH'
@@ -45,159 +60,301 @@ module HdpH.Closure
   ) where
 
 import Prelude hiding (error)
-import Control.DeepSeq (NFData(rnf))
-import Data.ByteString.Lazy as Lazy (ByteString)
-import Data.Monoid (mconcat)
+import Control.DeepSeq (NFData, rnf)
 import Data.Serialize (Serialize)
-import qualified Data.Serialize (put, get)
-import Data.Typeable (Typeable, Typeable1, typeOf, typeOfDefault)
+import Data.Typeable (Typeable)
 
-import HdpH.Internal.Misc (Void, encodeLazy, decodeLazy)
-import HdpH.Internal.Static
-       (Static, unstatic, staticAs, staticAsTD, declare, register)
+import HdpH.Internal.Closure   -- re-export whole module
+import HdpH.Internal.Static (Static, register)
 
 
 -----------------------------------------------------------------------------
--- 'Static' declaration and registration
+-- Key facts about explicit closures
+--
+-- * An /explicit closure/ is an expression of type 'Closure t', wrapping
+--   a thunk of type 't'.
+--
+-- * The 'Closure' type constructor is abstract (see module
+--   'HdpH.Internal.Closure or reference [2] for its internal /dual/
+--   representation).
+--
+-- * The function 'unClosure' returns the thunk wrapped in an explicit closure.
+--
+-- * The function 'unsafeMkClosure' constructs explicit closures but is 
+--   considered *unsafe* because it exposes the internal dual representation,
+--   and relies on the programmer to guarantee consistency.
+--
+-- * [2] proposes a *safe* explicit closure construction '$(mkClosure [|...|])'
+--   where the '...' is an arbitrary thunk. Due to current limitations of
+--   the GHC (namely missing support for the 'Static' type constructor),
+--   this module provides only limited variants of '$(mkClosure [|...|])',
+--   where the thunk is either a toplevel variable, or where the thunk is
+--   a toplevel variable applied to a tuple of local variables.
 
--- Req'd for calls to 'idClosure', 'mapClosure', 'compClosure', as well as
--- the static deserializer (of class 'DecodeStatic') for 'Closure'.
+
+-----------------------------------------------------------------------------
+-- User's guide to explicit closures
+--
+-- This guide will demonstrate the safe construction of explicit closures
+-- in HdpH through a series of examples.
+--
+--
+-- CONSTRUCTING PLAIN CLOSURES
+--
+-- The first example is the definition of the closure transformation
+-- 'mapClosure'. In [2], 'mapClosure' is defined by eliminating the
+-- explicit closures of its arguments, and constructing a new closure
+-- of the the resulting application, as follows:
+--
+-- > mapClosure :: Closure (a -> b) -> Closure a -> Closure b
+-- > mapClosure clo_f clo_x =
+-- >   $(mkClosure [|unClosure clo_f $ unClosure clo_x|])
+--
+-- If 'Static' were fully supported by GHC then 'mkClosure' would abstract
+-- the free local variables (here 'clo_f' and 'clo_x') in its quoted argument,
+-- serialise a tuple of these variables, and construct a suitable /static/
+-- deserialiser. In short, the above Template Haskell splice would expand to
+-- the following definition:
+--
+-- > mapClosure clo_f clo_x = 
+-- >   let thk = unClosure clo_f $ unClosure clo_x
+-- >       env = encodeEnv (clo_f, clo_x)
+-- >       fun = static (\env -> let (clo_f, clo_x) = decodeEnv env
+-- >                               in unClosure clo_f $ unClosure clo_x)
+-- >     in unsafeMkClosure thk fun env
+--
+-- However, the current implementation of 'mkClosure' cannot do this because
+-- there is no term former 'static'. Instead, the current implementation
+-- of 'mkClosure' expects its quoted argument to be in a one of two special
+-- forms: either it is a single /toplevel/ variable, or an application of a
+-- /toplevel/ variable to a tuple of free variables. To distinguish the two
+-- forms, we will call explicit closures constructed from single toplevel
+-- variables /static/.
+--
+-- We present the definition of 'mapClosure', which can also be found at the
+-- end of this file, as an example of how to construct a general, non-static
+-- explicit closure. The definition is as follows:
+--
+-- > mapClosure clo_f clo_x =
+-- >   $(mkClosure [|mapClosure_abs (clo_f, clo_x)|])
+-- >
+-- > mapClosure_abs :: (Closure (a -> b), Closure a) -> b
+-- > mapClosure_abs (clo_f, clo_x) = unClosure clo_f $ unClosure clo_x
+--
+-- First, the programmer must manually define a toplevel /closure abstraction/
+-- 'mapClosure_abs' which abstracts a tuple '(clo_f, clo_x)' of free local
+-- variables occuring in the expression to be converted into an explicit
+-- closure. (Usually, the programmer would want the closure abstraction
+-- 'mapClosure_abs' to be inlined.) 
+--
+-- Second, the programmer constructs the explicit closure via a Template 
+-- Haskell splice '$(mkClosure [|...|])', where the quoted expression
+-- 'mapClosure_abs (clo_f, clo_x)' is an application of the toplevel
+-- closure abstraction to a tuple of free local variables. It is important
+-- that this actual tuple of variables matches *exactly* the formal tuple
+-- in the definition of the closure abstraction. In fact, best practice is
+-- for quoted expression to textually match the left-hand side of the
+-- definition of the closure abstraction.
+--
+-- Finally, a static deserialiser corresponding to the toplevel closure
+-- abstraction must be registered. To this end, HdpH exports a function 
+-- 'register' and this module exports a Template Haskell function 'static'
+-- which converts the name of a toplevel closure abstraction into a
+-- static deserialiser. The programmer should use this as follows;
+-- see also the definition of 'registerStatic' below. 
+--
+-- > register $(static 'mapClosure_abs)
+--
+--
+-- The second example is the definition of the static explicit closure
+-- 'idClosure', which lifts the identity function to a function closure.
+-- The definition is a follows; see also code towards the end of this file.
+--
+-- > idClosure :: Closure (a -> a)
+-- > idClosure = $(mkClosure [|id|])
+--
+-- The expression to be converted into an explicit closure, the variable 'id',
+-- does not contain any free local variables, so there is no need to
+-- abstract a tuple of free variables. In fact, in this case the expression
+-- is already a toplevel variable, so there is also no need to define a new
+-- toplevel closure abstraction either. Thus, the programmer constructs the
+-- static explicit closure via the the Template Haskell splice
+-- '$(mkClosure [|...|])', where the quoted expression 'id' is a toplevel 
+-- variable.
+-- 
+-- The programmer must also register a static deserialiser corresponding to
+-- the toplevel variable out of which the static explicit closure was created.
+-- This is done as follows; see also the definition of 'registerStatic' below. 
+--
+-- > register $(static_ 'id)
+--
+-- Note the use of 'static_' instead of 'static' to create a static
+-- deserialiser for a *static* explicit closure, ie. a static deserialiser
+-- that does not actually deserialise any free variables. Accidentally
+-- mixing up 'static' and 'static_' will be caught by the type checker,
+-- but will result in unintelligible error messages.
+--
+--
+-- CONSTRUCTING FAMILIES OF CLOSURES DISCRIMINATED BY TYPE
+--
+-- The third example is the function 'toClosure' which converts any suitable
+-- value into an explicit closure (which will force the value upon
+-- serialisation). The *suitable* values are those whose type is an instance
+-- of class 'StaticId' -- about which more later -- hence the actual explicit
+-- closure contructed by 'toClosure' depends on the type of its argument.
+-- Therefore, 'toClosure' uses 'mkClosureTD' to generate a type-indexed
+-- family of closures, and then uses the type of its argument to select
+-- the actual closure, as shown below (and further below in this file).
+--
+-- > toClosure :: (StaticId a) => a -> Closure a
+-- > toClosure val = $(mkClosureTD [|id val|]) val
+--
+-- Here, 'mkClosureTD' expects the same type of arguments as 'mkClosure',
+-- that is, the identity function 'id' serves as a toplevel closure abstraction
+-- and 'val' is a 1-tuple of free local variables. Note that the Template
+-- Haskell splice produces a type-indexed family of explicit closures, ie.
+-- a function taking a dummy argument (here the second occurence of 'val' --
+-- which could have been replaced with '(undefined :: a)') for the sake of
+-- supplying the index type (here 'a').
+--
+-- As before, a static deserialiser corresponding to the toplevel closure
+-- abstraction 'id' must be registered. However, this is now linked to
+-- instantiating class 'StaticId' and will be discussed below.
+--
+--
+-- Finally, the fourth example is the function 'forceClosureClosure' (see
+-- module 'HdpH.Strategies') which returns a "fully forcing" closure strategy.
+-- It does so by generating a type-indexed family of static explicit closures
+-- as follows.
+--
+-- > forceClosureClosure :: (StaticForceClosure a)
+-- >                     => Closure (Strategy (Closure a))
+-- > forceClosureClosure = $(mkClosureTD [|forceClosure|]) (undefined :: a)
+--
+-- The toplevel closure abstraction 'forceClosure' is defined in module
+-- 'HdpH.Strategies' as is the class 'StaticForceClosure'. Note that
+-- 'mkClosureTD' works in the same way as above, except for taking only
+-- a toplevel closure abstraction as argument, as expected in the case of 
+-- *static* explicit closures. Note also that '(undefined :: a)' is the only
+-- way of passing the type index since there is other expression of type 'a'.
+--
+-- A static deserialiser corresponding to the toplevel closure abstraction
+-- 'forceClosure' must be registered. Again, this is linked to instantiating 
+-- class 'StaticForceClosure' and will be discussed below.
+--
+--
+-- REGISTERING STATIC DESERIALISERS
+--
+-- For every toplevel closure abstraction occuring in a call to 'mkClosure' or
+-- 'mkClosureTD', a corresponding static deserialiser must be constructed
+-- (via 'static', 'static_', 'staticTD', or 'staticTD_') and registered
+-- (via 'register' from module 'HdpH'). Registration must happen before any
+-- closures are deserialised. To this end, every module that constructs
+-- explicit closures, or that imports modules that do so, must obey the
+-- following conventions:
+--
+-- * Every module M that constructs explicit closures, or instantiates the
+--   classes 'StaticId' or 'StaticForceClosure', or imports modules that
+--   export a function 'registerStatic :: IO ()', must itself export a 
+--   function 'registerStatic :: IO ()'.
+--
+-- * The definition of 'registerStatic' in a module M must
+--   * call all 'registerStatic' functions of imported modules,
+--   * call 'register $(static 'clo_abs)' for all toplevel closure 
+--     abstractions 'clo_abs' occuring in non-static explicit closures 
+--     constructed by 'mkClosure',
+--   * call 'register $(static_ 'clo_abs)' for all toplevel closure
+--     abstractions 'clo_abs' occuring in static explicit closures 
+--     constructed by 'mkClosure',
+--   * call 'register $ staticIdTD (undefined :: t)' for all types 't'
+--     for which M defines an instance of class 'StaticId', and
+--   * call 'register $ staticForceClosureTD (undefined :: t)' for all
+--     types 't' for which M defines an instance of class 'StaticForceClosure'.
+--
+-- * The 'main' function in the 'Main' module must call its 'registerStatic'
+--   first thing, or at least before calling any function that might
+--   deserialise explicit closures.
+--
+-- An example of the definition of 'registerStatic' and the 'StaticId'
+-- instances can be in this file. A more complex example can be found in
+-- 'TEST/HdpH/sumeuler.hs'; here is an extract of the relevant code.
+--
+-- > import HdpH
+-- > import HdpH.Strategies hiding (registerStatic)
+-- > import qualified HdpH.Strategies (registerStatic)
+-- >
+-- > instance StaticId Int
+-- > instance StaticId [Int]
+-- > instance StaticId Integer
+-- > instance StaticForceClosure Integer
+-- >
+-- > registerStatic :: IO ()
+-- > registerStatic = do
+-- >   HdpH.Strategies.registerStatic
+-- >   register $ staticIdTD (undefined :: Int)
+-- >   register $ staticIdTD (undefined :: [Int])
+-- >   register $ staticIdTD (undefined :: Integer)
+-- >   register $ staticForceClosureTD (undefined :: Integer)
+-- >   register $(static 'spark_sum_euler_abs)
+-- >   register $(static_ 'sum_totient)
+-- >   register $(static_ 'totient)
+-- >
+-- > main :: IO ()
+-- > main = do
+-- >   hSetBuffering stdout LineBuffering
+-- >   hSetBuffering stderr LineBuffering
+-- >   registerStatic
+-- >   ...
+--
+-- Here, 'registerStatic' first calls 'registerStatic' of the imported
+-- module 'HpdH.Strategies'. Then it registers the static deserialisers
+-- linked to the instances of classes 'StaticId' and 'StaticForceClosure'.
+-- Finally, it registers the closure abstractions 'spark_sum_euler_abs',
+-- 'sum_totient' and 'totient', the latter two being used to generate
+-- static explicit closures. Note that 'main' calls 'registerStatic'
+-- early on -- definitely before it any mention of explicit closures.
+
+
+-----------------------------------------------------------------------------
+-- 'Static' registration
+
+-- static deserializer for explicit Closures; see below
+instance StaticId (Closure a)
+
 registerStatic :: IO ()
-registerStatic =
-  register $ mconcat
-    [declare idClosureStatic,
-     declare compClosureStatic,
-     declare mapClosureStatic,
-     declare (decodeStatic :: Static (Env -> Closure a))]
+registerStatic = do
+  register $ staticIdTD (undefined :: Closure a)
+  register $(static_ 'id)
+  register $(static 'compClosure_abs)
+  register $(static 'mapClosure_abs)
 
 
 -----------------------------------------------------------------------------
--- closure type constructor
+-- static deserialisers
 
--- Serialiased environment
-type Env = Lazy.ByteString
-
--- introducing an environment
-encodeEnv :: (Serialize a) => a -> Env
-encodeEnv = encodeLazy
-
--- eliminating an environment
-decodeEnv :: (Serialize a) => Env -> a
-decodeEnv = decodeLazy
-
-
--- An explicit 'Closure' (of type 'a') maintains a dual representation
--- of an actual closure of type 'a'.
--- * The first constructor argument id the actual closure value.
--- * The second and third argument comprise a serialisable representation
---   of the closure value, consisting of a (static) function expecting a
---   (serialised) environment, plus such a serialised environment.
---
--- The former rep is used for computing with closures while the latter
--- is used for serialising and communicating closures across the network.
---
-data Closure a = Closure
-                   a                    -- actual closure value
-                   (Static (Env -> a))  -- static environment deserialiser
-                   Env                  -- serialised environment
-
--- 'Typeable' instance 'Closure' ignores phantom type argument (subst w/ Void)
-deriving instance Typeable1 Closure
-
-instance Typeable (Closure a) where
-  typeOf _ = typeOfDefault (undefined :: Closure Void)
+-- Static deserialisers corresponding to the identity function.
+-- NOTE: Do not override default class methods when instantiating.
+class (Serialize a, Typeable a) => StaticId a where
+  -- static deserializer to be registered for every class instance;
+  -- argument serves as type discriminator but is never evaluated
+  staticIdTD :: a -> Static (Env -> a)
+  staticIdTD typearg = $(staticTD 'id) typearg
 
 
 -----------------------------------------------------------------------------
--- NFData/Serialize instances for Closure;
--- note that these instances are uniform for all 'Closure a' types since
--- they ignore the type argument 'a'.
-
--- NOTE: These instances obey a contract between Serialize and NFData
---       (which is important for the semantics of 'HdpH.rput')
--- * A type is an instance of NFData iff it is an instance of Serialize.
--- * A value is forced by 'rnf' to the same extent it is forced by
---   'rnf . encode'.
-
--- NOTE: Phil is unhappy with this contract. He argues that 'rnf' should
---       fully force the closure (and thus evaluate further than 'rnf . encode'
---       would). His argument is essentially that 'rnf' should act on
---       explicit closures as it acts on actual closures. Which would mean
---       that 'NFData (Closure a)' can only be defined given a '(Serialize a)'
---       context.
---
---       Here is the killer argument against Phil's proposal: Because of the
---       type of 'rnf', it can only evaluate its argument as a side effect;
---       it cannot actually change its representation. However, forcing an
---       explicit closure must change its representation (at least if we
---       want to preserve the evaluation status across serialisation).
-
-instance NFData (Closure a) where
-  -- force all fields apart from the actual closure value
-  rnf (Closure _ fun env) = rnf fun `seq` rnf env
-
-
-instance Serialize (Closure a) where
-  -- serialise all fields apart from the actual closure value
-  put (Closure _ fun env) = Data.Serialize.put fun >>
-                            Data.Serialize.put env
-
-  -- deserialise all fields and lazily re-instate the actual closure value
-  get = do fun <- Data.Serialize.get
-           env <- Data.Serialize.get
-           let val = (unstatic fun) env
-           return $ Closure val fun env
-
-
-instance Show (Closure a) where  -- for debugging only; show serialisable rep
-  showsPrec _ (Closure _ fun env) = showString "Closure(" . shows fun .
-                                    showString "," . shows env . showString ")"
-
-
------------------------------------------------------------------------------
--- introducing and eliminating closures
-
--- Eliminating a closure (aka. un-closure conversion) by returning its value
-unClosure :: Closure a -> a
-unClosure (Closure val _ _) = val
-
-
--- introducing a closure (aka. closure conversion)
--- NOTE: unsafe version; '(unstatic fun) env' and 'val' must evaluate to same.
-unsafeMkClosure :: a -> Static (Env -> a) -> Env -> Closure a
-unsafeMkClosure val fun env = Closure val fun env
-
--- introducing a closure; variant of 'unsafeMkClosure' for empty environments
-unsafeMkClosure0 :: a -> Static (Env -> a) -> Closure a
-unsafeMkClosure0 val fun = Closure val fun env
-  where env = encodeLazy ()  -- empty dummy environment
-
+-- closure conversion for values
 
 -- converting a value into a closure (forcing the value on serialisation)
-toClosure :: (DecodeStatic a) => a -> Closure a
-toClosure val = Closure val fun env
-  where env = encodeLazy val
-        fun = decodeStatic
+toClosure :: (StaticId a) => a -> Closure a
+toClosure val = $(mkClosureTD [| id val |]) val
+                -- Trailing 'val' is type discriminiator argument.
 
--- Identities:
--- 'forall x . unClosure $ toClosure x == x'
+
+-- Some identities about closures:
 -- 'forall x fun env . unClosure $ unsafeMkClosure x fun env == x'
--- 'forall x fun . unClosure $ unsafeMkClosure0 x fun == x'
-
-
------------------------------------------------------------------------------
--- forcing closures
-
--- forcing a closure (ie. fully normalising the actual closure value);
--- note that 'forceClosure clo' does not have the same effect as
--- * 'rnf clo' (because 'forceClosure' changes the closure representation), or
--- * 'rnf clo1 where clo1 = toClosure $ unClosure clo' (because 'forceClosure'
---   does not force the serialised environment of its result).
-forceClosure :: (NFData a, DecodeStatic a) => Closure a -> Closure a
-forceClosure clo = rnf val' `seq` clo' where
-  clo'@(Closure val' _ _) = toClosure $ unClosure clo
-  -- NOTE: Order of eval of args of 'seq' already determined by dependencies;
-  --       'pseq' would make no difference.
+-- 'forall x . unClosure $ toClosure x == x'
+-- 'forall clo_abs free_vars .
+--    unClosure $(mkClosure [| clo_abs free_vars |]) == clo_abs free_vars'
 
 
 ------------------------------------------------------------------------------
@@ -205,55 +362,22 @@ forceClosure clo = rnf val' `seq` clo' where
 
 -- identity wrapped in a closure
 idClosure :: Closure (a -> a)
-idClosure = unsafeMkClosure0 val fun
-  where val = id
-        fun = idClosureStatic
-
-idClosureStatic :: Static (Env -> (a -> a))
-idClosureStatic = staticAs (const id) "HdpH.Closure.idClosure"
+idClosure = $(mkClosure [| id |])
 
 
 -- composition of function closures
 compClosure :: Closure (b -> c) -> Closure (a -> b) -> Closure (a -> c)
-compClosure clo_g clo_f = unsafeMkClosure val fun env
-  where val = unClosure clo_g . unClosure clo_f
-        env = encodeLazy (clo_g, clo_f)
-        fun = compClosureStatic
+compClosure clo_g clo_f = $(mkClosure [| compClosure_abs (clo_g, clo_f) |])
 
-compClosureStatic :: Static (Env -> (a -> c))
-compClosureStatic = staticAs
-  (\ env -> let (clo_g, clo_f) = decodeLazy env
-              in unClosure clo_g . unClosure clo_f)
-  "HdpH.Closure.compClosure"
+{-# INLINE compClosure_abs #-}
+compClosure_abs :: (Closure (b -> c), Closure (a -> b)) -> (a -> c)
+compClosure_abs (clo_g, clo_f) = unClosure clo_g . unClosure clo_f
 
 
 -- map a closure by applying a function closure (without forcing anything)
 mapClosure :: Closure (a -> b) -> Closure a -> Closure b
-mapClosure clo_f clo_x = unsafeMkClosure val fun env
-  where val = unClosure clo_f $ unClosure clo_x
-        env = encodeLazy (clo_f, clo_x)
-        fun = mapClosureStatic
+mapClosure clo_f clo_x = $(mkClosure [| mapClosure_abs (clo_f, clo_x) |])
 
-mapClosureStatic :: Static (Env -> b)
-mapClosureStatic = staticAs
-  (\ env -> let (clo_f, clo_x) = decodeLazy env
-              in unClosure clo_f $ unClosure clo_x)
-  "HdpH.Closure.mapClosure"
-
-
------------------------------------------------------------------------------
--- static deserialisers
-
--- class of static deserialisers
-class (Serialize a, Typeable a) => DecodeStatic a where
-  decodeStatic :: Static (Env -> a)
-  decodeStatic = staticAsTD decodeLazy "HdpH.Closure.decode" (undefined :: a)
-
-
--- 'DecodeStatic' instance for closures
-instance DecodeStatic (Closure a)
-
--- NOTE: Every 'DecodeStatic' instance also needs to be registered.
---       In the case of the above instance for closures, 'registerStatic'
---       must include the following declaration:
---         'declare (decodeStatic :: Static (Env -> Closure a))'
+{-# INLINE mapClosure_abs #-}
+mapClosure_abs :: (Closure (a -> b), Closure a) -> b
+mapClosure_abs (clo_f, clo_x) = unClosure clo_f $ unClosure clo_x

@@ -4,6 +4,14 @@
 ## MPI: OpenMPI
 ## GHC: 6.12.3
 
+## To load HdpH programs into GHCi:
+## $> make MP/libwrap_mpi.so
+## $> ghci -ilib -LMP:/path/to/OpenMPI/lib -lmpi -lwrap_mpi TEST/HdpH/...
+
+## To run HdpH programs:
+## $> make TEST/HdpH/...
+## $> mpiexec -x LD_LIBRARY_PATH=MP -n ... TEST/HdpH/...
+
 # GHC environment (version 6.12.3)
 HC=ghc-6.12.3
 HLIBDIR=lib  ## some libraries from Hackage, installed locally
@@ -11,9 +19,9 @@ HCFLAGS=-threaded -cpp -O2
 #HCFLAGS=-threaded -cpp -O0 -DHDPH_DEBUG
 
 # OpenMPI environment (locally installed version 1.4.3)
-CC=$(HOME)/sw/openmpi/bin/mpicc
-CLIBS=-lwrap_mpi -lmpi -lopen-rte -lopen-pal -ldl -lnsl -lutil -lm
-CLIBPATH=MP:$(HOME)/sw/openmpi/lib
+CC=mpicc
+CLIBS=-lmpi -lwrap_mpi
+CLIBPATH=MP:/path/to/OpenMPI/lib
 
 # C compiler flags
 CFLAGS=-Wall -fPIC -O3
@@ -21,7 +29,7 @@ CFLAGS=-Wall -fPIC -O3
 
 SRC=$(shell find TEST -name '*.hs' -o -name '*.lhs')
 EXE=$(basename $(SRC))
-MPLIB=MP/libwrap_mpi.a
+MPLIB=MP/libwrap_mpi.so
 
 .PHONY: default all clean emacsclean distclean
 
@@ -57,8 +65,8 @@ TEST/HdpH_IO/%: TEST/HdpH_IO/%.hs $(MPLIB)
 TEST/%: TEST/%.hs
 	$(HC) $(HCFLAGS) -i$(HLIBDIR) --make $<
 
-MP/libwrap_mpi.a: MP/wrap_mpi.o
-	cd MP; ar rc libwrap_mpi.a wrap_mpi.o
+MP/libwrap_mpi.so: MP/wrap_mpi.o
+	cd MP; $(CC) -shared -o libwrap_mpi.so wrap_mpi.o
 
 MP/wrap_mpi.o: MP/wrap_mpi.c MP/wrap_mpi.h
 	cd MP; $(CC) $(CFLAGS) -c wrap_mpi.c

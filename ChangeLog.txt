@@ -1,5 +1,20 @@
 HdpH ChangeLog
 
+Version 'IFL11_final' (06 May 2012)
+
+* This version largely corresponds to what is described in the IFL 2011
+  paper [1] and includes code for the benchmarks reported in the paper.
+  The main difference to the paper are the workarounds to emulate the
+  'Static' type (which GHC does not yet provide), see module HdpH.Closure
+  for details.
+
+* References:
+  [1] Patrick Maier, Phil Trinder. Implementing a High-level Distributed-
+      Memory Parallel Haskell in Haskell. Proceedings of IFL 2011, Springer.
+      To appear.
+      [http://www.macs.hw.ac.uk/~pm175/papers/Maier_Trinder_IFL2011_XT.pdf]
+
+
 Version 'IFL11_submit' (30 Nov 2011)
 
 * This version is described is some detail in the IFL 2011 post-proceedings

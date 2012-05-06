@@ -32,14 +32,6 @@ static MPI_Status status;  // status of most recent MPI_Recv
 static int shutdown_ctr;   // counting down shutdown messages received
 
 
-// The following is taken from 'includes/Rts.h' of GHC (as of version 6.12.1).
-// We need access to these variables to pass them on to MPI_Init which should
-// remove MPI specific arguments *before* the GHC RTS gets its hands on it.
-extern int    prog_argc;
-extern char **prog_argv;
-
-
-
 /////////////////////////////////////////////////////////////////////////////
 // functions used during initialisation
 
@@ -49,7 +41,7 @@ maybe_procs_t mpi_init()
   int ranks;
 
   // init MPI with full thread support
-  MPI_Init_thread(&prog_argc, &prog_argv, MPI_THREAD_MULTIPLE, &provided);
+  MPI_Init_thread(NULL, NULL, MPI_THREAD_MULTIPLE, &provided);
 
   // dup communicator: local copy of MPI_COMM_WORLD
   MPI_Comm_dup(MPI_COMM_WORLD, &comm);

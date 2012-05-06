@@ -6,7 +6,8 @@
 --
 -----------------------------------------------------------------------------
 
-{-# LANGUAGE FlexibleInstances #-}  -- req'd for some DecodeStatic instances
+{-# LANGUAGE FlexibleInstances #-}  -- req'd for some ToClosure instances
+{-# LANGUAGE TemplateHaskell #-}    -- req'd for mkClosure, etc
 
 module Main where
 
@@ -17,7 +18,6 @@ import Data.List (elemIndex, stripPrefix)
 import Data.Functor ((<$>))
 import Data.List (transpose)
 import Data.Maybe (fromJust)
-import Data.Monoid (mconcat)
 import System.Environment (getArgs)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 import System.Random (mkStdGen, setStdGen)
@@ -26,38 +26,34 @@ import qualified MP.MPI_ByteString as MPI
 import HdpH (RTSConf(..), defaultRTSConf,
              Par, runParIO,
              force, fork, spark, new, get, put, glob, rput,
-             IVar,
-             Env, encodeEnv, decodeEnv,
-             Closure, toClosure, unsafeMkClosure, unsafeMkClosure0, unClosure,
-             DecodeStatic, decodeStatic,
-             Static, staticAs, declare, register)
+             IVar, GIVar,
+             Closure, unClosure, toClosure, mkClosure, static, static_,
+             StaticId, staticIdTD, register)
 import HdpH.Strategies (Strategy,
-                        ForceClosureStatic, forceClosureStatic,
+                        StaticForceClosure, staticForceClosureTD,
                         parMapNF, parMapChunkedNF, parMapSlicedNF)
 import qualified HdpH.Strategies as Strategies (registerStatic)
 import HdpH.Internal.Misc (timeIO)  -- for measuring runtime
 
 
 -----------------------------------------------------------------------------
--- 'Static' declaration and registration
+-- 'Static' registration
 
-instance DecodeStatic Int
-instance DecodeStatic [Int]
-instance DecodeStatic Integer
-instance ForceClosureStatic Integer
+instance StaticId Int
+instance StaticId [Int]
+instance StaticId Integer
+instance StaticForceClosure Integer
 
 registerStatic :: IO ()
 registerStatic = do
   Strategies.registerStatic  -- reg Static terms in imported module
-  register $ mconcat
-    [declare totient_Static,
-     declare sum_totient_Static,
-     declare spark_sum_euler_Static,
-     declare (decodeStatic :: Static (Env -> Int)),
-     declare (decodeStatic :: Static (Env -> [Int])),
-     declare (decodeStatic :: Static (Env -> Integer)),
-     declare (forceClosureStatic ::
-                Static (Env -> Strategy (Closure Integer)))]
+  register $ staticIdTD (undefined :: Int)
+  register $ staticIdTD (undefined :: [Int])
+  register $ staticIdTD (undefined :: Integer)
+  register $ staticForceClosureTD (undefined :: Integer)
+  register $(static 'spark_sum_euler_abs)
+  register $(static_ 'sum_totient)
+  register $(static_ 'totient)
 
 
 -----------------------------------------------------------------------------
@@ -66,22 +62,12 @@ registerStatic = do
 totient :: Int -> Integer
 totient n = toInteger $ length $ filter (\ k -> gcd n k == 1) [1 .. n]
 
-totient_Static :: Static (Env -> Int -> Integer)
-totient_Static = staticAs
-  (const totient)
-  "Main.totient"
-
 
 -----------------------------------------------------------------------------
 -- sequential sum of totients
 
 sum_totient :: [Int] -> Integer
 sum_totient = sum . map totient
-
-sum_totient_Static :: Static (Env -> [Int] -> Integer)
-sum_totient_Static = staticAs
-  (const sum_totient)
-  "Main.sum_totient"
 
 
 -----------------------------------------------------------------------------
@@ -128,17 +114,12 @@ spark_sum_euler :: [Int] -> Par (IVar (Closure Integer))
 spark_sum_euler xs = do 
   v <- new
   gv <- glob v
-  let val = force (sum_totient xs) >>= rput gv . toClosure
-  let env = encodeEnv (xs, gv)
-  let fun = spark_sum_euler_Static
-  spark $ unsafeMkClosure val fun env
+  spark $(mkClosure [| spark_sum_euler_abs (xs, gv) |])
   return v
 
-spark_sum_euler_Static :: Static (Env -> Par ())
-spark_sum_euler_Static = staticAs
-  (\ env -> let (xs, gv) = decodeEnv env
-              in force (sum_totient xs) >>= rput gv . toClosure)
-  "Main.spark_sum_euler"
+spark_sum_euler_abs :: ([Int], GIVar (Closure Integer)) -> Par ()
+spark_sum_euler_abs (xs, gv) =
+  force (sum_totient xs) >>= rput gv . toClosure
 
 
 get_and_unClosure :: IVar (Closure a) -> Par a
@@ -150,22 +131,16 @@ get_and_unClosure = return . unClosure <=< get
 
 farm_sum_totient_chunked :: Int -> Int -> Int -> Par Integer
 farm_sum_totient_chunked lower upper chunksize =
-  sum <$> parMapNF clo_sum_totient chunked_list
-    where 
+  sum <$> parMapNF $(mkClosure [| sum_totient |]) chunked_list
+    where
       chunked_list = chunk chunksize [upper, upper - 1 .. lower] :: [[Int]]
 
 
 farm_sum_totient_sliced :: Int -> Int -> Int -> Par Integer
 farm_sum_totient_sliced lower upper slices =
-  sum <$> parMapNF clo_sum_totient sliced_list
-    where 
+  sum <$> parMapNF $(mkClosure [| sum_totient |]) sliced_list
+    where
       sliced_list = slice slices [upper, upper - 1 .. lower] :: [[Int]]
-
-
-clo_sum_totient :: Closure ([Int] -> Integer)
-clo_sum_totient = unsafeMkClosure0 val fun
-  where val = sum_totient
-        fun = sum_totient_Static
 
 
 -----------------------------------------------------------------------------
@@ -173,22 +148,16 @@ clo_sum_totient = unsafeMkClosure0 val fun
 
 chunkfarm_sum_totient :: Int -> Int -> Int -> Par Integer
 chunkfarm_sum_totient lower upper chunksize =
-  sum <$> parMapChunkedNF chunksize clo_totient list
+  sum <$> parMapChunkedNF chunksize $(mkClosure [| totient |]) list
     where
       list = [upper, upper - 1 .. lower] :: [Int]
 
 
 slicefarm_sum_totient :: Int -> Int -> Int -> Par Integer
 slicefarm_sum_totient lower upper slices =
-  sum <$> parMapSlicedNF slices clo_totient list
+  sum <$> parMapSlicedNF slices $(mkClosure [| totient |]) list
     where
       list = [upper, upper - 1 .. lower] :: [Int]
-
-
-clo_totient :: Closure (Int -> Integer)
-clo_totient = unsafeMkClosure0 val fun
-  where val = totient
-        fun = totient_Static
 
 
 -----------------------------------------------------------------------------

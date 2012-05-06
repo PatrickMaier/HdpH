@@ -18,12 +18,12 @@ import Data.IORef (IORef, newIORef)
 import qualified Data.Map as Map (empty)
 import System.IO.Unsafe (unsafePerformIO)
 
-import HdpH.Internal.Type.Static (StaticDecl(StaticDecl))
+import HdpH.Internal.Type.Static (StaticDecl)
 
 
 -----------------------------------------------------------------------------
 -- reference to global 'Static' declaration, initially empty
 
 sdRef :: IORef StaticDecl
-sdRef = unsafePerformIO $ newIORef $ StaticDecl Map.empty
+sdRef = unsafePerformIO $ newIORef $ Map.empty
 {-# NOINLINE sdRef #-}   -- required to protect unsafePerformIO hack

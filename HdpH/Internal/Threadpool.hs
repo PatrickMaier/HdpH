@@ -16,6 +16,9 @@ module HdpH.Internal.Threadpool
     liftCommM,    -- :: CommM a -> ThreadM m a
     liftIO,       -- :: IO a -> ThreadM m a
 
+    -- * thread pool ID (of scheduler's own pool)
+    poolID,       -- :: ThreadM m Int
+
     -- * putting threads into the scheduler's own pool
     putThread,    -- :: Thread m -> ThreadM m ()
     putThreads,   -- :: [Thread m] -> ThreadM m ()
@@ -51,15 +54,15 @@ type ThreadM m = ReaderT (State m) (SparkM m)
 
 
 -- thread pool state (mutable bits held in DequeIO)
-type State m = [DequeIO (Thread m)]  -- list of actual thread pools
-
+type State m = [(Int, DequeIO (Thread m))]  -- list of actual thread pools,
+                                            -- each with identifying Int
 
 -- Eliminates the 'ThreadM' layer by executing the given 'action' (typically
 -- a scheduler loop) on the given non-empty list of thread 'pools' (the first
 -- of which is the scheduler's own pool).
 -- NOTE: An empty list of pools is admitted but then 'action' must not call
 --      'putThread', 'putThreads', 'stealThread' or 'readMaxThreadCtrs'.
-run :: [DequeIO (Thread m)] -> ThreadM m a -> SparkM m a
+run :: [(Int, DequeIO (Thread m))] -> ThreadM m a -> SparkM m a
 run pools action = runReaderT action pools
 
 
@@ -85,7 +88,7 @@ liftIO = liftSparkM . Sparkpool.liftIO
 -----------------------------------------------------------------------------
 -- access to state
 
-getPools :: ThreadM m [DequeIO (Thread m)]
+getPools :: ThreadM m [(Int, DequeIO (Thread m))]
 getPools = do pools <- ask
               case pools of
                 [] -> error "HdpH.Internal.Threadpool.getPools: no pools"
@@ -95,9 +98,16 @@ getPools = do pools <- ask
 -----------------------------------------------------------------------------
 -- access to thread pool
 
+-- Return thread pool ID, that is ID of scheduler's own pool.
+poolID :: ThreadM m Int
+poolID = do
+  my_pool:_ <- getPools
+  return $ fst my_pool
+
+
 -- Read the max size of each thread pool.
 readMaxThreadCtrs :: ThreadM m [Int]
-readMaxThreadCtrs = getPools >>= liftIO . mapM maxLengthIO
+readMaxThreadCtrs = getPools >>= liftIO . mapM (maxLengthIO . snd)
 
 
 -- Steal a thread from any thread pool, with own pool as highest priority;
@@ -108,15 +118,15 @@ readMaxThreadCtrs = getPools >>= liftIO . mapM maxLengthIO
 stealThread :: ThreadM m (Maybe (Thread m))
 stealThread = do
   my_pool:other_pools <- getPools
-  maybe_thread <- liftIO $ popFrontIO my_pool
+  maybe_thread <- liftIO $ popFrontIO $ snd my_pool
   case maybe_thread of
     Just _  -> return maybe_thread
     Nothing -> steal other_pools
       where
-        steal :: [DequeIO (Thread m)] -> ThreadM m (Maybe (Thread m))
+        steal :: [(Int, DequeIO (Thread m))] -> ThreadM m (Maybe (Thread m))
         steal []           = return Nothing
         steal (pool:pools) = do
-          maybe_thread <- liftIO $ popBackIO pool
+          maybe_thread <- liftIO $ popBackIO $ snd pool
           case maybe_thread of
             Just _  -> return maybe_thread
             Nothing -> steal pools
@@ -127,7 +137,7 @@ stealThread = do
 putThread :: Thread m -> ThreadM m ()
 putThread thread = do
   my_pool:_ <- getPools
-  liftIO $ pushFrontIO my_pool thread
+  liftIO $ pushFrontIO (snd my_pool) thread
   liftSparkM $ wakeupSched 1
 
 
@@ -137,5 +147,5 @@ putThread thread = do
 putThreads :: [Thread m] -> ThreadM m ()
 putThreads threads = do
   all_pools@(my_pool:_) <- getPools
-  liftIO $ mapM_ (pushFrontIO my_pool) threads
+  liftIO $ mapM_ (pushFrontIO $ snd my_pool) threads
   liftSparkM $ wakeupSched (min (length all_pools) (length threads))

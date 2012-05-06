@@ -16,6 +16,7 @@
 {-# LANGUAGE StandaloneDeriving #-}          -- for 'GIVar'
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}  -- for 'GIVar'
 {-# LANGUAGE DeriveDataTypeable #-}          -- for 'GIVar'
+{-# LANGUAGE TemplateHaskell #-}             -- for mkClosure, etc
 
 module HdpH_IO
   ( -- * invoking the system
@@ -29,13 +30,15 @@ module HdpH_IO
 
     -- * explicit work placement
     pushTo,    -- :: Closure (IO ()) -> NodeId -> IO ()
-    delay,     -- !!!
+    delay,     -- :: IO () -> IO ()
 
     -- * local IVars
     IVar,      -- :: * -> *; instances: none
     new,       -- :: IO (IVar a)
     put,       -- :: IVar a -> a -> IO ()
     get,       -- :: IVar a -> IO a
+    poll,      -- :: IVar a -> IO (Maybe a)
+    probe,     -- :: IVar a -> IO Bool
 
     -- * global IVars
     GIVar,     -- :: * -> *; insts: Eq, Ord, Show, NFData, Serialize, Typeable1
@@ -51,12 +54,8 @@ module HdpH_IO
     staticAs,    -- :: a -> String -> Static a
     staticAsTD,  -- :: (Typeable t) => a -> String -> t -> Static a
 
-    -- * declaring 'Static' terms
-    StaticDecl,  -- :: *; insts: Monoid, Show
-    declare,     -- Static a -> StaticDecl
-
-    -- * registering global 'Static' declaration
-    register     -- :: StaticDecl -> IO ()
+    -- * globally registering 'Static' terms
+    register     -- :: Static a -> IO ()
   ) where
 
 import Prelude hiding (error)
@@ -70,7 +69,7 @@ import Control.Monad (unless, when)
 import Data.Functor ((<$>))
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.List ((\\))
-import Data.Maybe (fromJust)
+import Data.Maybe (isJust, fromJust)
 import Data.Serialize (Serialize)
 import qualified Data.Serialize (put, get)
 import Data.Typeable (Typeable1)
@@ -87,8 +86,7 @@ import HdpH.Internal.Location
        (NodeId, rank, mkMyNodeId, myNode, allNodes, error,
         MyNodeException(NodeIdUnset))
 import HdpH.Internal.Misc (encodeLazy, decodeLazy)
-import HdpH.Internal.Static
-       (Static, staticAs, staticAsTD, StaticDecl, declare, register)
+import HdpH.Internal.Static (Static, staticAs, staticAsTD, register)
 import HdpH.Internal.State.Location (myNodeRef, allNodesRef)
 
 
@@ -131,6 +129,16 @@ new = do sig <- newEmptyMVar
 get :: IVar a -> IO a
 get v = do readMVar (ready v)               -- block waiting for 'ready'
            fromJust <$> readMVar (value v)  -- read and extract value
+
+
+-- polling for the value of an IVar; non-blocking
+poll :: IVar a -> IO (Maybe a)
+poll v = readMVar (value v)  -- non-blocking because 'value' is always full
+
+
+-- probing whether an IVar is full; non-blocking
+probe :: IVar a -> IO Bool
+probe v = isJust <$> poll v
 
 
 -- write to IVar (but don't force any evaluation)
@@ -215,29 +223,14 @@ glob v = GIVar <$> GRef.globalise v
 
 -- remote write to global IVar (of Closure type)
 rput :: GIVar (Closure a) -> Closure a -> IO ()
-rput gv clo = pushTo (unsafeMkClosure val fun env) (at gv)
-  where
-    val = putg gv clo
-    env = encodeLazy (gv, clo)
-    fun = putgStatic
+rput gv clo = pushTo $(mkClosure [| rput_abs (gv, clo) |]) (at gv)
 
 -- write to locally hosted global IVar; don't export
-putg :: GIVar (Closure a) -> Closure a -> IO ()
-putg (GIVar gref) clo = do
+{-# INLINE rput_abs #-}
+rput_abs :: (GIVar (Closure a), Closure a) -> IO ()
+rput_abs (GIVar gref, clo) = do
   GRef.withGRef gref (\ v -> put v clo) (return ())  -- ignore dead 'gref'
   GRef.free gref                                     -- free 'gref' async'ly
-
--- 'Static' wrapper around 'putg'; don't export
-putgStatic :: Static (Env -> IO ())
-putgStatic = staticAs
-  (\ env -> let (gv, clo) = decodeLazy env
-              in putg gv clo)
-  "HdpH_IO.putg"
-
--- declaration of 'Static' wrapper around 'putg'; don't export;
--- will be registered before running RTS
-putgStaticDecl :: StaticDecl
-putgStaticDecl = declare putgStatic
 
 
 -----------------------------------------------------------------------------
@@ -390,7 +383,7 @@ withHdpH_ :: IO () -> IO ()
 withHdpH_ prog = do
   -- register 'Static' terms
   Closure.registerStatic
-  register putgStaticDecl
+  register $(static 'rput_abs)
 
   -- init RTS: set own node ID
   me <- mkMyNodeId
