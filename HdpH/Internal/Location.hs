@@ -34,14 +34,15 @@ module HdpH.Internal.Location
     debug,  -- :: Int -> String -> IO ()
 
     -- * debug levels
-    dbgNone,     -- :: Int
-    dbgStats,    -- :: Int
-    dbgSpark,    -- :: Int
-    dbgMsgSend,  -- :: Int
-    dbgMsgRcvd,  -- :: Int
-    dbgGIVar,    -- :: Int
-    dbgIVar,     -- :: Int
-    dbgGRef      -- :: Int
+    dbgNone,       -- :: Int
+    dbgStats,      -- :: Int
+    dbgStaticTab,  -- :: Int
+    dbgSpark,      -- :: Int
+    dbgMsgSend,    -- :: Int
+    dbgMsgRcvd,    -- :: Int
+    dbgGIVar,      -- :: Int
+    dbgIVar,       -- :: Int
+    dbgGRef        -- :: Int
   ) where
 
 import Prelude hiding (catch, error)
@@ -110,11 +111,12 @@ debug level message = do
 
 
 -- debug levels
-dbgNone    = 0 :: Int  -- no debug output
-dbgStats   = 1 :: Int  -- print final stats
-dbgSpark   = 2 :: Int  -- spark created or converted
-dbgMsgSend = 3 :: Int  -- message to be sent
-dbgMsgRcvd = 4 :: Int  -- message being handled
-dbgGIVar   = 5 :: Int  -- op on a GIVar (globalising or writing to)
-dbgIVar    = 6 :: Int  -- blocking/unblocking on an IVar (only log event type)
-dbgGRef    = 7 :: Int  -- registry update (globalise or free)
+dbgNone      = 0 :: Int  -- no debug output
+dbgStats     = 1 :: Int  -- print final stats
+dbgStaticTab = 2 :: Int  -- on main node, print Static table
+dbgSpark     = 3 :: Int  -- spark created or converted
+dbgMsgSend   = 4 :: Int  -- message to be sent
+dbgMsgRcvd   = 5 :: Int  -- message being handled
+dbgGIVar     = 6 :: Int  -- op on a GIVar (globalising or writing to)
+dbgIVar      = 7 :: Int  -- blocking/unblocking on IVar (only log event type)
+dbgGRef      = 8 :: Int  -- registry update (globalise or free)

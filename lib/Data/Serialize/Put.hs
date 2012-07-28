@@ -1,4 +1,4 @@
--- package: cereal-0.3.3.0
+-- package: cereal-0.3.5.2
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Data.Serialize.Put
@@ -71,6 +71,7 @@ import qualified Data.Serialize.Builder as B
 import Control.Applicative
 import Data.Array.Unboxed
 import Data.Monoid
+import Data.Foldable (foldMap)
 import Data.Word
 import qualified Data.ByteString        as S
 import qualified Data.ByteString.Lazy   as L
@@ -84,8 +85,8 @@ import qualified Data.Tree              as T
 
 ------------------------------------------------------------------------
 
--- XXX Strict in buffer only. 
-data PairS a = PairS a {-# UNPACK #-}!Builder
+-- XXX Strict in builder only. 
+data PairS a = PairS a !Builder
 
 sndS :: PairS a -> Builder
 sndS (PairS _ b) = b
@@ -252,16 +253,18 @@ putWord64host       = tell . B.putWord64host
 
 -- Containers ------------------------------------------------------------------
 
+encodeListOf :: (a -> Builder) -> [a] -> Builder
+encodeListOf f = -- allow inlining with just a single argument
+    \xs ->  execPut (putWord64be (fromIntegral $ length xs)) `mappend`
+            foldMap f xs
+{-# INLINE encodeListOf #-}
+
 putTwoOf :: Putter a -> Putter b -> Putter (a,b)
 putTwoOf pa pb (a,b) = pa a >> pb b
 {-# INLINE putTwoOf #-}
 
 putListOf :: Putter a -> Putter [a]
-putListOf pa = go 0 (return ())
-  where
-  go n body []     = putWord64be n >> body
-  go n body (x:xs) = n' `seq` go n' (body >> pa x) xs
-    where n' = n + 1
+putListOf pa = tell . encodeListOf (execPut . pa)
 {-# INLINE putListOf #-}
 
 putIArrayOf :: (Ix i, IArray a e) => Putter i -> Putter e -> Putter (a i e)
@@ -271,16 +274,16 @@ putIArrayOf pix pe a = do
 {-# INLINE putIArrayOf #-}
 
 putSeqOf :: Putter a -> Putter (Seq.Seq a)
-putSeqOf pa = go 0 (return ())
-  where
-  go n body s = case Seq.viewl s of
-    Seq.EmptyL  -> putWord64be n >> body
-    a Seq.:< as -> n' `seq` go n' (body >> pa a) as
-      where n' = n + 1
+putSeqOf pa = \s -> do
+    putWord64be (fromIntegral $ Seq.length s) 
+    tell (foldMap (execPut . pa) s)
 {-# INLINE putSeqOf #-}
 
 putTreeOf :: Putter a -> Putter (T.Tree a)
-putTreeOf pa (T.Node r s) = pa r >> putListOf (putTreeOf pa) s
+putTreeOf pa = 
+    tell . go
+  where
+    go (T.Node x cs) = execPut (pa x) `mappend` encodeListOf go cs
 {-# INLINE putTreeOf #-}
 
 putMapOf :: Ord k => Putter k -> Putter a -> Putter (Map.Map k a)

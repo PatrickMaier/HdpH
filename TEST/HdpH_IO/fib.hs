@@ -16,6 +16,7 @@ import Control.DeepSeq (NFData, deepseq)
 import Control.Monad (when)
 import Data.List (elemIndex, stripPrefix)
 import Data.Maybe (fromJust)
+import Data.Monoid (mconcat)
 import System.Environment (getArgs)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 import System.Random (mkStdGen, setStdGen, randomRIO)
@@ -26,20 +27,23 @@ import HdpH_IO (withHdpH,
                 pushTo, delay,
                 new, get, put,
                 GIVar, glob, rput,
-                Closure, unClosure, toClosure, mkClosure, static,
-                StaticId, staticIdTD, register)
+                Closure, unClosure, mkClosure,
+                toClosure, ToClosure(locToClosure),
+                static, StaticToClosure, staticToClosure,
+                StaticDecl, declare, register, here)
+import qualified HdpH_IO (declareStatic)
 
 
 -----------------------------------------------------------------------------
--- 'Static' registration
+-- Static declaration
 
-instance StaticId Integer
+instance ToClosure Integer where locToClosure = $(here)
 
-registerStatic :: IO ()
-registerStatic = do
-  register $ staticIdTD (undefined :: Integer)
-  register $(static 'dist_fib_abs)
-  register $(static 'dist_fib_nb_abs)
+declareStatic :: StaticDecl
+declareStatic = mconcat [HdpH_IO.declareStatic,
+                         declare (staticToClosure :: StaticToClosure Integer),
+                         declare $(static 'dist_fib_abs),
+                         declare $(static 'dist_fib_nb_abs)]
 
 
 -----------------------------------------------------------------------------
@@ -174,7 +178,7 @@ main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
   hSetBuffering stderr LineBuffering
-  registerStatic
+  register declareStatic
   defaultWithMPI $ do
     opts_args <- getArgs
     let (seed, args) = parseOpts opts_args

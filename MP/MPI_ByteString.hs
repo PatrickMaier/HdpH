@@ -68,7 +68,7 @@ import Data.ByteString.Lazy.Internal  -- reqd to get our hands on overheads
 import Data.IORef (readIORef, modifyIORef)
 import Data.List (foldl')
 import Data.Word (Word8)
-import Foreign.C.Types (CInt)
+import Foreign.C.Types (CInt(..))
 import Foreign.Ptr (Ptr, nullPtr, plusPtr, castPtr)
 import Foreign.Marshal.Alloc (mallocBytes, free)
 import Foreign.Marshal.Array (peekArray, pokeArray)

@@ -13,9 +13,7 @@
 --
 -----------------------------------------------------------------------------
 
-{-# LANGUAGE StandaloneDeriving #-}          -- for 'GIVar'
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}  -- for 'GIVar'
-{-# LANGUAGE DeriveDataTypeable #-}          -- for 'GIVar'
 {-# LANGUAGE TemplateHaskell #-}             -- for mkClosure, etc
 
 module HdpH_IO
@@ -24,7 +22,7 @@ module HdpH_IO
     withHdpH_, -- :: IO () -> IO ()
 
     -- * locations
-    NodeId,    -- :: *; insts: Eq, Ord, Show, NFData, Serialize, Typeable
+    NodeId,    -- :: *; insts: Eq, Ord, Show, NFData, Serialize
     myNode,    -- :: IO NodeId
     allNodes,  -- :: IO [NodeId]
 
@@ -41,21 +39,16 @@ module HdpH_IO
     probe,     -- :: IVar a -> IO Bool
 
     -- * global IVars
-    GIVar,     -- :: * -> *; insts: Eq, Ord, Show, NFData, Serialize, Typeable1
+    GIVar,     -- :: * -> *; insts: Eq, Ord, Show, NFData, Serialize
     at,        -- :: GIVar a -> NodeId
     glob,      -- :: IVar (Closure a) -> IO (GIVar (Closure a))
     rput,      -- :: GIVar (Closure a) -> Closure a -> IO ()
 
-    -- * explicit closures
+    -- * explicit Closures
     module HdpH.Closure,
 
-    -- * introducing 'Static' terms
-    Static,    -- :: * -> *; insts: Eq, Ord, Show, NFData, Serialize, Typeable1
-    staticAs,    -- :: a -> String -> Static a
-    staticAsTD,  -- :: (Typeable t) => a -> String -> t -> Static a
-
-    -- * globally registering 'Static' terms
-    register     -- :: Static a -> IO ()
+    -- * Static declaration for internal Closures in HdpH_IO and HdpH.Closure
+    declareStatic   -- :: StaticDecl
   ) where
 
 import Prelude hiding (error)
@@ -65,35 +58,39 @@ import Control.Concurrent.MVar
 import Control.DeepSeq (NFData, rnf)
 import Control.Exception
        (throw, bracketOnError, block) -- TODO: rep 'block' by 'mask_' in GHC 7
-import Control.Monad (unless, when)
+import Control.Monad (unless, when, join)
+import Control.Parallel (par)
 import Data.Functor ((<$>))
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef, atomicModifyIORef)
 import Data.List ((\\))
 import Data.Maybe (isJust, fromJust)
+import Data.Monoid (mconcat)
 import Data.Serialize (Serialize)
 import qualified Data.Serialize (put, get)
-import Data.Typeable (Typeable1)
 import Data.Word (Word8)
+import System.IO.Unsafe (unsafePerformIO)
 
 import qualified MP.MPI as MPI
        (Rank, rank0, myRank, allRanks, send, recv, getMsg)
 
-import HdpH.Closure hiding (registerStatic)  -- re-export almost whole module
-import qualified HdpH.Closure as Closure (registerStatic)
+import HdpH.Closure hiding (declareStatic)  -- re-export almost whole module
+import qualified HdpH.Closure (declareStatic)
 import HdpH.Internal.GRef (GRef)
 import qualified HdpH.Internal.GRef as GRef (at, globalise, free, withGRef)
 import HdpH.Internal.Location
        (NodeId, rank, mkMyNodeId, myNode, allNodes, error,
         MyNodeException(NodeIdUnset))
 import HdpH.Internal.Misc (encodeLazy, decodeLazy)
-import HdpH.Internal.Static (Static, staticAs, staticAsTD, register)
 import HdpH.Internal.State.Location (myNodeRef, allNodesRef)
 
 
-import Control.Parallel (par)
-import Control.Monad (join)
-import Data.IORef (atomicModifyIORef)
-import System.IO.Unsafe (unsafePerformIO)
+-----------------------------------------------------------------------------
+-- Static declaration
+
+declareStatic :: StaticDecl
+declareStatic = mconcat
+  [HdpH.Closure.declareStatic,
+   declare $(static 'rput_abs)]
 
 
 -----------------------------------------------------------------------------
@@ -204,8 +201,6 @@ put v x = withMVar (wlock v) $ \ _ -> do
 newtype GIVar a = GIVar { unGIVar :: GRef (IVar a) }
                   deriving (Eq, Ord, NFData, Serialize)
 
-deriving instance Typeable1 GIVar
-
 -- Show instance (mainly for debugging)
 instance Show (GIVar a) where
   showsPrec _ (GIVar gref) = showString "GIVar:" . shows gref
@@ -311,7 +306,7 @@ receive = decodeLazy <$> (MPI.getMsg =<< MPI.recv)
 -- NOTE: This RTS is very simplistic. 
 --       * RTS relies on MPI message queue rather than implementing its own;
 --         may therefore be vulnerable to MPI buffer overruns. 
---       * RTS does not avoid serialisation of closures that are pushed
+--       * RTS does not avoid serialisation of Closures that are pushed
 --         to the same node; such optimisation essentially requires
 --         RTS' own message queue.
 
@@ -381,10 +376,6 @@ handler = do
 --       and shows the same behaviour.
 withHdpH_ :: IO () -> IO ()
 withHdpH_ prog = do
-  -- register 'Static' terms
-  Closure.registerStatic
-  register $(static 'rput_abs)
-
   -- init RTS: set own node ID
   me <- mkMyNodeId
   writeIORef myNodeRef me
@@ -400,7 +391,7 @@ withHdpH_ prog = do
   
   if iAmMain 
     then do
-     -- main node; first fork 'prog'
+     -- main node; first fork 'prog' (should print Static table before)
       bracketOnError
         (forkIO (prog >> shutdown))
         (\ tid -> killThread tid >> shutdown)  -- on error: kill prog, shutdown

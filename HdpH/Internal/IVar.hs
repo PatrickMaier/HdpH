@@ -21,9 +21,9 @@ module HdpH.Internal.IVar
     GIVar,      -- synonym: GIVar m a = GRef (IVar m a)
 
     -- * operations on global IVars
-    globIVar,   -- :: IVar m a -> IO (GIVar m a)
+    globIVar,   -- :: Int -> IVar m a -> IO (GIVar m a)
     hostGIVar,  -- :: GIVar m a -> NodeId
-    putGIVar    -- :: GIVar m a -> a -> IO [Thread m]
+    putGIVar    -- :: Int -> GIVar m a -> a -> IO [Thread m]
   ) where
 
 import Prelude hiding (error)
@@ -138,18 +138,22 @@ hostGIVar :: GIVar m a -> NodeId
 hostGIVar = at
 
 
--- Globalise the given IVar.
-globIVar :: IVar m a -> IO (GIVar m a)
-globIVar v = do gv <- globalise v
-                debug dbgGIVar $ "New global IVar " ++ show gv
-                return gv
+-- Globalise the given IVar;
+-- the scheduler ID argument may be used for logging.
+globIVar :: Int -> IVar m a -> IO (GIVar m a)
+globIVar schedID v = do
+  gv <- globalise v
+  debug dbgGIVar $ "New global IVar " ++ show gv
+  return gv
 
 
 -- Write 'x' to the locally hosted global IVar 'gv', free 'gv' and return 
 -- the list of blocked threads. Like putIVar, multiple writes fail silently
--- (as do writes to a dead global IVar).
-putGIVar :: GIVar m a -> a -> IO [Thread m]
-putGIVar gv x = do debug dbgGIVar $ "Put to global IVar " ++ show gv
-                   ts <- withGRef gv (\ v -> putIVar v x) (return [])
-                   free gv    -- free 'gv' (eventually)
-                   return ts
+-- (as do writes to a dead global IVar);
+-- the scheduler ID argument may be used for logging.
+putGIVar :: Int -> GIVar m a -> a -> IO [Thread m]
+putGIVar schedID gv x = do
+  debug dbgGIVar $ "Put to global IVar " ++ show gv
+  ts <- withGRef gv (\ v -> putIVar v x) (return [])
+  free gv    -- free 'gv' (eventually)
+  return ts

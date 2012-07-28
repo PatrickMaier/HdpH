@@ -6,12 +6,10 @@
 --
 -----------------------------------------------------------------------------
 
-{-# LANGUAGE StandaloneDeriving #-}          -- for 'GIVar' and 'Par'
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}  -- for 'GIVar'
-{-# LANGUAGE DeriveDataTypeable #-}          -- for 'GIVar'
 {-# LANGUAGE TypeSynonymInstances #-}        -- for 'Par'
 {-# LANGUAGE FlexibleInstances #-}           -- for 'Par'
-{-# LANGUAGE TemplateHaskell #-}             -- for mkClosure, etc.
+{-# LANGUAGE TemplateHaskell #-}             -- for 'mkClosure', etc.
 
 module HdpH
   ( -- * runtime system
@@ -53,19 +51,14 @@ module HdpH
 
     -- * local and global IVars
     IVar,    -- * -> *; instances: none
-    GIVar,   -- * -> *; instances: Eq, Ord, Show, NFData, Serialize, Typeable1
+    GIVar,   -- * -> *; instances: Eq, Ord, Show, NFData, Serialize
     at,      -- :: GIVar a -> NodeId
 
-    -- * explicit closures
+    -- * explicit Closures
     module HdpH.Closure,
 
-    -- * introducing 'Static' terms
-    Static,      -- * -> *; insts: Eq, Ord, Show, NFData, Serialize, Typeable1
-    staticAs,    -- :: a -> String -> Static a
-    staticAsTD,  -- :: (Typeable t) => a -> String -> t -> Static a
-
-    -- * globally registering 'Static' terms
-    register     -- :: Static a -> IO ()
+    -- * Static declaration for internal Closures in HdpH and HdpH.Closure
+    declareStatic   -- :: StaticDecl
   ) where
 
 import Prelude hiding (error)
@@ -74,28 +67,35 @@ import Control.DeepSeq (NFData, deepseq)
 import Control.Monad (when)
 import Data.Functor ((<$>))
 import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.Monoid (mconcat)
 import Data.Serialize (Serialize)
-import Data.Typeable (Typeable1)
 
-import HdpH.Conf                             -- re-export whole module
-import HdpH.Closure hiding (registerStatic)  -- re-export almost whole module
-import qualified HdpH.Closure as Closure (registerStatic)
+import HdpH.Conf                            -- re-export whole module
+import HdpH.Closure hiding (declareStatic)  -- re-export almost whole module
+import qualified HdpH.Closure (declareStatic)
 import qualified HdpH.Internal.Comm as Comm
        (myNode, allNodes, isMain, shutdown)
 import qualified HdpH.Internal.IVar as IVar (IVar, GIVar)
 import HdpH.Internal.IVar
        (hostGIVar, newIVar, putIVar, getIVar, pollIVar, probeIVar,
         globIVar, putGIVar)
-import HdpH.Internal.Location (NodeId)
-import HdpH.Internal.Misc (encodeLazy, decodeLazy)
+import HdpH.Internal.Location (NodeId, dbgStaticTab)
 import HdpH.Internal.Scheduler
-       (RTS, liftThreadM, liftSparkM, liftCommM, liftIO, 
-        mkThread, execThread, sendPUSH)
+       (RTS, liftThreadM, liftSparkM, liftCommM, liftIO,
+        schedulerID, mkThread, execThread, sendPUSH)
 import qualified HdpH.Internal.Scheduler as Scheduler (run_)
 import HdpH.Internal.Sparkpool (putSpark)
-import HdpH.Internal.Static (Static, staticAs, staticAsTD, register)
 import HdpH.Internal.Threadpool (putThread, putThreads)
 import HdpH.Internal.Type.Par (ParM(Par), unPar, Thread(Atom))
+
+
+-----------------------------------------------------------------------------
+-- Static declaration
+
+declareStatic :: StaticDecl
+declareStatic = mconcat
+  [HdpH.Closure.declareStatic,
+   declare $(static 'rput_abs)]
 
 
 -----------------------------------------------------------------------------
@@ -105,8 +105,6 @@ newtype IVar a = IVar (IVar.IVar RTS a)
 
 newtype GIVar a = GIVar (IVar.GIVar RTS a)
                   deriving (Eq, Ord, NFData, Serialize)
-
-deriving instance Typeable1 GIVar
 
 -- Show instance (mainly for debugging)
 instance Show (GIVar a) where
@@ -126,14 +124,11 @@ at (GIVar gv) = hostGIVar gv
 -- behind the scenes. Every RTS computation must issue the action 'shutdownRTS'
 -- on exactly one node before terminating.
 
--- Eliminate the RTS monad down to IO by running the given 'action'
--- after registering 'Static' terms occuring in this module and HdpH.Closure;
+-- Eliminate the RTS monad down to IO by running the given 'action';
 -- aspects of the RTS's behaviour are controlled by the respective parameters 
 -- in the 'conf' argument.
 runRTS_ :: RTSConf -> RTS () -> IO ()
-runRTS_ conf action = do Closure.registerStatic
-                         register $(static 'rput_abs)
-                         Scheduler.run_ conf action
+runRTS_ = Scheduler.run_
 
 -- Return True iff this node is the root (or main) node.
 isMainRTS :: RTS Bool
@@ -142,6 +137,12 @@ isMainRTS = liftCommM Comm.isMain
 -- Initiate RTS shutdown (which will print stats, given the right debug level).
 shutdownRTS :: RTS ()
 shutdownRTS = liftCommM Comm.shutdown
+
+-- Print global Static table to stdout, one entry a line.
+printStaticTable :: RTS ()
+printStaticTable =
+  liftIO $ mapM_ putStrLn $
+    "Static Table:" : map ("  " ++) showStaticTable
 
 
 -----------------------------------------------------------------------------
@@ -198,8 +199,12 @@ runPar p = do -- create an empty MVar expecting the result of action 'p'
 --       system to hang.
 runParIO_ :: RTSConf -> Par () -> IO ()
 runParIO_ conf p = runRTS_ conf $ do isMain <- isMainRTS
-                                     when isMain $ do runPar p
-                                                      shutdownRTS
+                                     when isMain $ do
+                                       -- print Static table
+                                       when (dbgStaticTab <= debugLvl conf)
+                                         printStaticTable
+                                       runPar p
+                                       shutdownRTS
 
 
 -- Convenience: variant of 'runParIO_' which does return a result
@@ -249,11 +254,11 @@ fork = atom . liftThreadM . putThread . mkThread
 
 -- create a spark (ie. put it in the spark pool)
 spark :: Closure (Par ()) -> Par ()
-spark = atom . liftSparkM . putSpark
+spark clo = atom (schedulerID >>= \ i -> liftSparkM $ putSpark i clo)
 
 -- push a spark to the node given node (for eager execution)
 pushTo :: Closure (Par ()) -> NodeId -> Par ()
-pushTo spark = atom . sendPUSH spark
+pushTo clo = atom . sendPUSH clo
 
 -- IVar creation
 new :: Par (IVar a)
@@ -279,7 +284,7 @@ probe (IVar v) = atom $ liftIO (probeIVar v)
 
 -- globalise IVar (of Closure type)
 glob :: IVar (Closure a) -> Par (GIVar (Closure a))
-glob (IVar v) = GIVar <$> atom (liftIO $ globIVar v)
+glob (IVar v) = GIVar <$> atom (schedulerID >>= \ i -> liftIO $ globIVar i v)
 
 -- remote write to global IVar (of Closure type)
 rput :: GIVar (Closure a) -> Closure a -> Par ()
@@ -288,5 +293,6 @@ rput gv clo = pushTo $(mkClosure [| rput_abs (gv, clo) |]) (at gv)
 -- write to locally hosted global IVar; don't export
 {-# INLINE rput_abs #-}
 rput_abs :: (GIVar (Closure a), Closure a) -> Par ()
-rput_abs (GIVar gv, clo) = atom $ liftIO (putGIVar gv clo) >>=
+rput_abs (GIVar gv, clo) = atom $ schedulerID >>= \ i ->
+                                  liftIO (putGIVar i gv clo) >>=
                                   liftThreadM . putThreads

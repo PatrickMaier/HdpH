@@ -20,8 +20,8 @@ module HdpH.Internal.Sparkpool
     wakeupSched, -- :: Int -> SparkM m ()
 
     -- * local (ie. scheduler) access to spark pool
-    getSpark,    -- :: SparkM m (Maybe (Spark m))
-    putSpark,    -- :: Spark m -> SparkM m ()
+    getSpark,    -- :: Int -> SparkM m (Maybe (Spark m))
+    putSpark,    -- :: Int -> Spark m -> SparkM m ()
 
     -- * messages
     Msg(..),         -- instances: Show, NFData, Serialize
@@ -219,31 +219,34 @@ wakeupSched n = getIdleSchedsSem >>= liftIO . replicateM_ n . Sem.signal
 -- local access to spark pool
 
 -- Get a spark from the front of the spark pool, if there is any;
--- possibly send a FISH message and update stats (ie. count sparks converted).
-getSpark :: SparkM m (Maybe (Spark m))
-getSpark = do pool <- getPool
-              maybe_spark <- liftIO $ popFrontIO pool
-              sendFISH
-              case maybe_spark of
-                Just _  -> do getSparkConvCtr >>= incCtr
-                              sparks <- liftIO $ lengthIO pool
-                              debug dbgSpark $
-                                "#sparks=" ++ show sparks ++
-                                " (spark converted)"
-                              return maybe_spark
-                Nothing -> do return maybe_spark
+-- possibly send a FISH message and update stats (ie. count sparks converted);
+-- the scheduler ID argument may be used for logging.
+getSpark :: Int -> SparkM m (Maybe (Spark m))
+getSpark schedID = do
+  pool <- getPool
+  maybe_spark <- liftIO $ popFrontIO pool
+  sendFISH
+  case maybe_spark of
+    Just _  -> do getSparkConvCtr >>= incCtr
+                  sparks <- liftIO $ lengthIO pool
+                  debug dbgSpark $
+                    "#sparks=" ++ show sparks ++ " (spark converted)"
+                  return maybe_spark
+    Nothing -> do return maybe_spark
 
 
 -- Put a new spark at the back of the spark pool, wake up 1 sleeping scheduler,
--- and update stats (ie. count sparks generated locally).
-putSpark :: Spark m -> SparkM m ()
-putSpark spark = do pool <- getPool
-                    liftIO $ pushBackIO pool spark
-                    wakeupSched 1
-                    getSparkGenCtr >>= incCtr
-                    sparks <- liftIO $ lengthIO pool
-                    debug dbgSpark $
-                      "#sparks=" ++ show sparks ++ " (spark created)"
+-- and update stats (ie. count sparks generated locally);
+-- the scheduler ID argument may be used for logging.
+putSpark :: Int -> Spark m -> SparkM m ()
+putSpark schedID spark = do
+  pool <- getPool
+  liftIO $ pushBackIO pool spark
+  wakeupSched 1
+  getSparkGenCtr >>= incCtr
+  sparks <- liftIO $ lengthIO pool
+  debug dbgSpark $
+    "#sparks=" ++ show sparks ++ " (spark created)"
 
 
 -----------------------------------------------------------------------------

@@ -15,6 +15,7 @@ import Control.Concurrent (forkIO)
 import Control.DeepSeq (NFData, deepseq)
 import Data.List (stripPrefix)
 import Data.Functor ((<$>))
+import Data.Monoid (mconcat)
 import System.Environment (getArgs)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 
@@ -24,19 +25,22 @@ import HdpH_IO (withHdpH,
                 pushTo,
                 IVar, new, get, put,
                 GIVar, glob, rput,
-                Closure, unClosure, toClosure, mkClosure, static,
-                StaticId, staticIdTD, register)
+                Closure, unClosure, mkClosure,
+                toClosure, ToClosure(locToClosure),
+                static, StaticToClosure, staticToClosure,
+                StaticDecl, declare, register, here)
+import qualified HdpH_IO (declareStatic)
 
 
 -----------------------------------------------------------------------------
--- 'Static' registration
+-- Static declaration
 
-instance StaticId Integer
+instance ToClosure Integer where locToClosure = $(here)
 
-registerStatic :: IO ()
-registerStatic = do
-  register $ staticIdTD (undefined :: Integer)
-  register $(static 'dist_sum_totient_abs)
+declareStatic :: StaticDecl
+declareStatic = mconcat [HdpH_IO.declareStatic,
+                         declare (staticToClosure :: StaticToClosure Integer),
+                         declare $(static 'dist_sum_totient_abs)]
 
 
 -----------------------------------------------------------------------------
@@ -138,7 +142,7 @@ main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
   hSetBuffering stderr LineBuffering
-  registerStatic
+  register declareStatic
   defaultWithMPI $ do
     args <- getArgs
     let (version, lower, upper, chunksize) = parseArgs args

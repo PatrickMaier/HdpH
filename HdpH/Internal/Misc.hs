@@ -6,21 +6,13 @@
 --
 -------------------------------------------------------------------------------
 
-{-# LANGUAGE EmptyDataDecls #-}      -- req'd for type 'Void'
-{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE GADTs #-}               -- for existential types
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE FlexibleContexts #-}    -- for Forkable instances
 {-# LANGUAGE FlexibleInstances #-}
 
 module HdpH.Internal.Misc
-  ( -- * empty type
-    Void,         -- instances: Typeable
-
-    -- * identity type constructor
-    I(..),        -- instances: Typeable1
-
-    -- * existential wrapper type
+  ( -- * existential wrapper type
     AnyType(..),  -- no instances
 
     -- * monads supporting forking of threads
@@ -79,7 +71,6 @@ import qualified Data.ByteString.Lazy
 import Data.Serialize (Serialize)
 import qualified Data.Serialize (encode, decode, encodeLazy, decodeLazy)
 import Data.Time.Clock (NominalDiffTime, diffUTCTime, getCurrentTime)
-import Data.Typeable (Typeable, Typeable1)
 import Data.Word (Word8)
 import GHC.Conc (forkOnIO)  -- GHC specific!
 
@@ -148,18 +139,6 @@ showListUpto n (x:xs) = showString "[" . shows x . go (n - 1) xs
     go _ [] = showString "]"
     go n (x:xs) | n > 0     = showString "," . shows x . go (n - 1) xs
                 | otherwise = showString ",...]"
-
-
--------------------------------------------------------------------------------
--- Empty type (serves as substitute for phantom types)
-
-data Void deriving (Typeable)
-
-
--------------------------------------------------------------------------------
--- Identity type constructor
-
-newtype I a = I { unI :: a } deriving (Typeable)
 
 
 -------------------------------------------------------------------------------

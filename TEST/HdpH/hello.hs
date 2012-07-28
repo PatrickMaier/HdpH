@@ -12,6 +12,7 @@ module Main where
 
 import Prelude
 import Data.List (stripPrefix)
+import Data.Monoid (mconcat)
 import System.Environment (getArgs)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 import System.Mem (performGC)
@@ -20,21 +21,23 @@ import qualified MP.MPI_ByteString as MPI
 import HdpH (RTSConf(..), defaultRTSConf,
              Par, runParIO_,
              myNode, allNodes, io, pushTo, new, get, glob, rput,
-             NodeId,
-             IVar, GIVar,
-             Closure, toClosure, mkClosure, static,
-             StaticId, staticIdTD, register)
+             NodeId, IVar, GIVar,
+             Closure, mkClosure,
+             toClosure, ToClosure(locToClosure),
+             static, StaticToClosure, staticToClosure,
+             StaticDecl, declare, register, here)
+import qualified HdpH (declareStatic)
 
 
 -----------------------------------------------------------------------------
--- 'Static' registration
+-- Static declaration
 
-instance StaticId ()
+instance ToClosure () where locToClosure = $(here)
 
-registerStatic :: IO ()
-registerStatic = do
-  register $(static 'hello_abs)
-  register $ staticIdTD (undefined :: ())
+declareStatic :: StaticDecl
+declareStatic = mconcat [HdpH.declareStatic,
+                         declare (staticToClosure :: StaticToClosure ()),
+                         declare $(static 'hello_abs)]
 
 
 -----------------------------------------------------------------------------
@@ -104,7 +107,7 @@ main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
   hSetBuffering stderr LineBuffering
-  registerStatic
+  register declareStatic
   MPI.defaultWithMPI $ do
     opts_args <- getArgs
     let (conf, _seed, _args) = parseOpts opts_args

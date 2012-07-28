@@ -11,6 +11,7 @@
 module Main where
 
 import Prelude
+import Data.Monoid (mconcat)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 
 import MP.MPI (defaultWithMPI)
@@ -19,19 +20,22 @@ import HdpH_IO (withHdpH_,
                 pushTo,
                 IVar, new, get,
                 GIVar, glob, rput,
-                Closure, toClosure, mkClosure, static,
-                StaticId, staticIdTD, register)
+                Closure, mkClosure,
+                toClosure, ToClosure(locToClosure),
+                static, StaticToClosure, staticToClosure,
+                StaticDecl, declare, register, here)
+import qualified HdpH_IO (declareStatic)
 
 
 -----------------------------------------------------------------------------
--- 'Static' registration
+-- Static declaration
 
-instance StaticId ()
+instance ToClosure () where locToClosure = $(here)
 
-registerStatic :: IO ()
-registerStatic = do
-  register $ staticIdTD (undefined :: ())
-  register $(static 'hello_abs)
+declareStatic :: StaticDecl
+declareStatic = mconcat [HdpH_IO.declareStatic,
+                         declare (staticToClosure :: StaticToClosure ()),
+                         declare $(static 'hello_abs)]
 
 
 -----------------------------------------------------------------------------
@@ -64,6 +68,6 @@ main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering  -- output buffering
   hSetBuffering stderr LineBuffering
-  registerStatic                      -- register 'Static' terms
+  register declareStatic              -- register 'Static' terms
   defaultWithMPI $ do                 -- run MPI
     withHdpH_ hello_world             -- and within that run HdpH

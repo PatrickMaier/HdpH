@@ -18,6 +18,7 @@ import Data.List (elemIndex, stripPrefix)
 import Data.Functor ((<$>))
 import Data.List (transpose)
 import Data.Maybe (fromJust)
+import Data.Monoid (mconcat)
 import System.Environment (getArgs)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 import System.Random (mkStdGen, setStdGen)
@@ -27,33 +28,38 @@ import HdpH (RTSConf(..), defaultRTSConf,
              Par, runParIO,
              force, fork, spark, new, get, put, glob, rput,
              IVar, GIVar,
-             Closure, unClosure, toClosure, mkClosure, static, static_,
-             StaticId, staticIdTD, register)
-import HdpH.Strategies (Strategy,
-                        StaticForceClosure, staticForceClosureTD,
-                        parMapNF, parMapChunkedNF, parMapSlicedNF)
-import qualified HdpH.Strategies as Strategies (registerStatic)
+             Closure, unClosure, mkClosure,
+             toClosure, ToClosure(locToClosure),
+             static, static_, StaticToClosure, staticToClosure,
+             StaticDecl, declare, register, here)
+import qualified HdpH (declareStatic)
+import HdpH.Strategies (Strategy, ForceCC(locForceCC),
+                        parMapNF, parMapChunkedNF, parMapSlicedNF,
+                        StaticForceCC, staticForceCC)
+import qualified HdpH.Strategies (declareStatic)
 import HdpH.Internal.Misc (timeIO)  -- for measuring runtime
 
 
 -----------------------------------------------------------------------------
--- 'Static' registration
+-- Static declaration
 
-instance StaticId Int
-instance StaticId [Int]
-instance StaticId Integer
-instance StaticForceClosure Integer
+instance ToClosure Int where locToClosure = $(here)
+instance ToClosure [Int] where locToClosure = $(here)
+instance ToClosure Integer where locToClosure = $(here)
+instance ForceCC Integer where locForceCC = $(here)
 
-registerStatic :: IO ()
-registerStatic = do
-  Strategies.registerStatic  -- reg Static terms in imported module
-  register $ staticIdTD (undefined :: Int)
-  register $ staticIdTD (undefined :: [Int])
-  register $ staticIdTD (undefined :: Integer)
-  register $ staticForceClosureTD (undefined :: Integer)
-  register $(static 'spark_sum_euler_abs)
-  register $(static_ 'sum_totient)
-  register $(static_ 'totient)
+declareStatic :: StaticDecl
+declareStatic =
+  mconcat
+    [HdpH.declareStatic,             -- declare Static deserialisers
+     HdpH.Strategies.declareStatic,  -- from imported modules
+     declare (staticToClosure :: StaticToClosure Int),
+     declare (staticToClosure :: StaticToClosure [Int]),
+     declare (staticToClosure :: StaticToClosure Integer),
+     declare (staticForceCC :: StaticForceCC Integer),
+     declare $(static 'spark_sum_euler_abs),
+     declare $(static_ 'sum_totient),
+     declare $(static_ 'totient)]
 
 
 -----------------------------------------------------------------------------
@@ -255,7 +261,7 @@ main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
   hSetBuffering stderr LineBuffering
-  registerStatic
+  register declareStatic
   MPI.defaultWithMPI $ do
     opts_args <- getArgs
     let (conf, seed, args) = parseOpts opts_args

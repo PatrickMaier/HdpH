@@ -1,4 +1,4 @@
--- package: cereal-0.3.3.0
+-- package: cereal-0.3.5.2
 {-# LANGUAGE CPP       #-}
 {-# LANGUAGE MagicHash #-}
 -- for unboxed shifts
@@ -58,7 +58,11 @@ module Data.Serialize.Builder (
   ) where
 
 import Data.Monoid
-import Foreign
+import Data.Word
+import Foreign.ForeignPtr
+import Foreign.Ptr (Ptr,plusPtr)
+import Foreign.Storable
+import System.IO.Unsafe (unsafePerformIO)
 import qualified Data.ByteString          as S
 import qualified Data.ByteString.Lazy     as L
 import qualified Data.ByteString.Internal as S

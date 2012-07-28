@@ -189,11 +189,12 @@ scheduleThread (Atom m) = m >>= maybe scheduler scheduleThread
 --       * once the delay after a NOWORK message has expired.
 getThread :: RTS (Thread RTS)
 getThread = do
+  schedID <- schedulerID
   maybe_thread <- liftThreadM stealThread
   case maybe_thread of
     Just thread -> return thread
     Nothing     -> do
-      maybe_spark <- liftSparkM getSpark
+      maybe_spark <- liftSparkM $ getSpark schedID
       case maybe_spark of
         Just spark -> return $ mkThread $ unClosure spark
         Nothing    -> liftSparkM blockSched >> getThread

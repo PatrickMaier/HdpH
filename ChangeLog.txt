@@ -1,5 +1,19 @@
 HdpH ChangeLog
 
+Version '2012-07-27' (27 Jul 2012)
+
+* This version is mostly identical to 'IFL11_final'. Apart from a few
+  small updates, there is only one major change: The support for the
+  explicit 'Closure' type has been factored out so that it can be
+  compiled and used separately from HdpH. Along with this goes a complete
+  rewrite of the support for 'Static', moving its implementation closer
+  to how it would be realised in the compiler.
+
+* There are minor API changes in modules HdpH.Closure and HdpH.Strategies.
+  The most significant difference to 'IFL11_final' is the removal of all
+  'Typeable' constraints from these modules.
+
+
 Version 'IFL11_final' (06 May 2012)
 
 * This version largely corresponds to what is described in the IFL 2011

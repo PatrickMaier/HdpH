@@ -3,7 +3,7 @@ HdpH ReadMe
 
 PRE-REQUISITES
 
-* GHC (tested with GHC 6.12.3 and 7.2.1)
+* GHC (tested with GHC 6.12.3, 7.2.1 and 7.4.1)
 
 * Haskell Platform compatible with GHC (or at least the following packages
   that would come with the platform: deepseq, mtl, network, parallel,
@@ -22,7 +22,7 @@ There are a number of Makefiles provided, some variables may need adapting:
 
 Other variables that may be changed:
 * HCFLAGS: Add -DHDPH_DEBUG to make HdpH produce low-level debug output.
-* CFLAGS:  Add -DMPI_DEBUG to get MPI layer produce low-level debug output.
+* CFLAGS:  Add -DMPI_DEBUG to make MPI layer produce low-level debug output.
 
 To build HdpH and all test programs, type 'make all'.
 
@@ -36,14 +36,15 @@ where the MPI libs are.) Eg. in bash, I type
 
 $> export LD_LIBRARY_PATH=MP
 
-Then, in the HdpH root directory, invoke the executable via mpiexec.
-For instance, to compute the value of the Fibonacci function at 45
-(with a sequential threshold of 30 and a shared-memory threshold of 35)
-on 3 nodes, each with 4 cores, I type
+Then, in the HdpH root directory, invoke the executable via mpiexec;
+depending on your MPI implementation you may need to adapt parameters
+and flags in the example below. For instance, to compute the value of
+the Fibonacci function at 45 (with a sequential threshold of 30 and a
+shared-memory threshold of 35) on 3 nodes, each with 4 cores, I type
 
 $> time mpiexec -n 3 TEST/HdpH/fib -scheds=4 -d1 v2 45 30 35 +RTS -N4
 
-The argument "v2" calls for distributed memory mode; the option "-d1"
+The argument "v2" runs fib in distributed memory mode; the option "-d1"
 causes output of some statistics. I get the following output from the
 above command:
 
@@ -75,9 +76,15 @@ excludes MPI startup and shutdown time.
 
 KNOWN PROBLEMS
 
-HdpH built with GHC 6.12.3 and MPICH2 1.2.x on 64bit Linux machines tends
-to get stuck during the MPI shutdown phase. The cause of the problem is
-yet unknown. GHC 7.2.1 does not appear to have this problem.
+* HdpH built with GHC 6.12.3 and MPICH2 1.2.x on 64bit Linux machines tends
+  to get stuck during the MPI shutdown phase. The cause of the problem is
+  yet unknown. GHC 7.2.1 does not appear to have this problem.
+
+* Running HdpH on all cores of a multicore machine (eg. running with
+  4 schedulers on a quad-core) often results in extremely variable runtimes.
+  The exact cause is yet unknown but it appears related to a known GHC
+  phenomenon, the "last core slowdown". For now, the workaround is to
+  avoid running on all cores (eg. use only 3 cores of a quad-core).
 
 
 DIRECTORY STRUCTURE
@@ -86,7 +93,9 @@ DIRECTORY STRUCTURE
 
 HdpH		exposed modules (Closure, Conf, Strategies)
 
-HdpH/Internal	internal modules, not to be imported by HdpH applications;
+HdpH/Closure	internal modules implementing explicit Closures
+
+HdpH/Internal	internal modules implementing scheduler, registry, etc.
 
 MP		internal modules providing a message passing abstraction;
 		wrapping an MPI library
@@ -131,13 +140,14 @@ remote writable global IVars. The latter relies on a registry for
 global references (module 'HdpH.Internal.GRef'). Currently, there is
 one registry per node.
 
-Explicit closures are the data structure underlying both remote work
-distribution and remote communication. They are provided by the
-exposed module 'HdpH.Closure', which relies on 'HpdH.Internal.Closure'
-and 'HdpH.Internal.Static' for a workaround of the as yet missing
-'Static' support in GHC.
+'HdpH.Internal.Location' exposes locations (aka node IDs) to the system.
+This module is at the bottom of the dependency hierarchy because node IDs
+crop up almost anywhere (and be it only to be attached to debug messages).
 
-Finally, 'HdpH.Internal.Location' exposes locations (aka node IDs) to
-the system. This module is at the bottom of the dependency hierarchy
-because node IDs crop up almost anywhere (and be it only to be
-attached to debug messages).
+Explicit Closures are the data structure underlying both remote work
+distribution and remote communication. They are provided by the
+exposed module 'HdpH.Closure', which depends on 'HdpH.Closure.Static'
+for a workaround of the as yet missing 'Static' support in GHC.
+Explicit Closures are independent of the other HdpH modules. That is,
+'HdpH.Closure' and its dependencies (in the directory 'Hdph/Closure')
+can be compiled and used separately from HdpH.

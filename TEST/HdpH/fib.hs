@@ -6,7 +6,7 @@
 --
 -----------------------------------------------------------------------------
 
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell #-}  -- req'd for mkClosure, etc
 
 module Main where
 
@@ -16,6 +16,7 @@ import Control.Monad (when)
 import Data.Functor ((<$>))
 import Data.List (elemIndex, stripPrefix)
 import Data.Maybe (fromJust)
+import Data.Monoid (mconcat)
 import System.Environment (getArgs)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 import System.Random (mkStdGen, setStdGen)
@@ -25,29 +26,34 @@ import HdpH (RTSConf(..), defaultRTSConf,
              Par, runParIO,
              allNodes, force, fork, spark, new, get, put, glob, rput,
              GIVar, NodeId,
-             Closure, unClosure, toClosure, mkClosure, static, static_,
-             StaticId, staticIdTD, register)
+             Closure, unClosure, mkClosure,
+             toClosure, ToClosure(locToClosure),
+             static, static_, StaticToClosure, staticToClosure,
+             StaticDecl, declare, register, here)
+import qualified HdpH (declareStatic)
 import HdpH.Strategies (parDivideAndConquer, pushDivideAndConquer)
-import qualified HdpH.Strategies as Strategies (registerStatic)
+import qualified HdpH.Strategies (declareStatic)
 import HdpH.Internal.Misc (timeIO)  -- for measuring runtime
 
 
 -----------------------------------------------------------------------------
--- 'Static' registration
+-- 'Static' declaration
 
-instance StaticId Int
-instance StaticId Integer
+instance ToClosure Int where locToClosure = $(here)
+instance ToClosure Integer where locToClosure = $(here)
 
-registerStatic :: IO ()
-registerStatic = do
-  Strategies.registerStatic
-  register $ staticIdTD (undefined :: Int)
-  register $ staticIdTD (undefined :: Integer)
-  register $(static 'dist_fib_abs)
-  register $(static 'dnc_trivial_abs)
-  register $(static_ 'dnc_simplySolve)
-  register $(static_ 'dnc_decompose)
-  register $(static_ 'dnc_combineSolutions)
+declareStatic :: StaticDecl
+declareStatic =
+  mconcat
+    [HdpH.declareStatic,             -- declare Static deserialisers
+     HdpH.Strategies.declareStatic,  -- from imported modules
+     declare (staticToClosure :: StaticToClosure Int),
+     declare (staticToClosure :: StaticToClosure Integer),
+     declare $(static 'dist_fib_abs),
+     declare $(static 'dnc_trivial_abs),
+     declare $(static_ 'dnc_simplySolve),
+     declare $(static_ 'dnc_decompose),
+     declare $(static_ 'dnc_combineSolutions)]
 
 
 -----------------------------------------------------------------------------
@@ -216,7 +222,7 @@ main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
   hSetBuffering stderr LineBuffering
-  registerStatic
+  register declareStatic
   MPI.defaultWithMPI $ do
     opts_args <- getArgs
     let (conf, seed, args) = parseOpts opts_args

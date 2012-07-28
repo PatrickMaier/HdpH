@@ -7,11 +7,10 @@
 -----------------------------------------------------------------------------
 
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE DeriveDataTypeable #-}
 
 module HdpH.Internal.Location_MPI
   ( -- * node IDs (and their constitutent parts)
-    NodeId,           -- instances: Eq, Ord, Show, NFData, Serialize, Typeable
+    NodeId,           -- instances: Eq, Ord, Show, NFData, Serialize
     rank,             -- :: NodeId -> MP.MPI.Rank
     host,             -- :: NodeId -> IPv4Addr
     mkMyNodeId,       -- :: IO NodeId
@@ -27,7 +26,6 @@ import Data.Functor ((<$>))
 import Data.List (intercalate)
 import Data.Serialize (Serialize)
 import qualified Data.Serialize (put, get, putWord32be, getWord32be)
-import Data.Typeable (Typeable)
 import Data.Word (Word8)
 import Network.BSD (getHostName, getHostByName, hostAddresses)
 
@@ -57,7 +55,6 @@ mkMyNodeId = do
 
 deriving instance Eq NodeId
 deriving instance Ord NodeId
-deriving instance Typeable NodeId
 
 instance Show NodeId where
   showsPrec _ node = showChar '<' . shows (rank node) . showChar '@' . 
