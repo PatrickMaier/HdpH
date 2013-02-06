@@ -1,5 +1,14 @@
 HdpH ChangeLog
 
+Cabal packages hdph-0.0.1 and hdph-closure-0.0.1 (06 Feb 2013)
+
+* In directory 'release'.
+
+* The package hdph-0.0.1 uses TCP rather than MPI for networking. This isn't
+  a long term solution but rather a quick fix until some issues with the
+  previous MPI binding are resolved.
+
+
 Version '2012-07-27' (27 Jul 2012)
 
 * This version is mostly identical to 'IFL11_final'. Apart from a few
