@@ -1,0 +1,33 @@
+name:          hdph-closure
+version:       0.1.1
+synopsis:      Explicit closures in Haskell distributed parallel Haskell
+description:   Explicit closures are serialisable representations of thunks.
+               This package exports the fully polymorphic explicit closures
+               of HdpH (Haskell distributed parallel Haskell), for use
+               by HdpH or other packages.
+homepage:      https://github.com/PatrickMaier/HdpH
+license:       BSD3
+license-file:  LICENSE
+author:        Patrick Maier <C.Patrick.Maier@gmail.com>
+maintainer:    Patrick Maier <C.Patrick.Maier@gmail.com>
+stability:     experimental
+category:      Control, Distributed Computing
+tested-with:   GHC == 7.6.3
+build-type:    Simple
+cabal-version: >= 1.8
+
+Library
+  exposed-modules: Control.Parallel.HdpH.Closure
+  other-modules:   Control.Parallel.HdpH.Closure.Internal,
+                   Control.Parallel.HdpH.Closure.Static,
+                   Control.Parallel.HdpH.Closure.Static.State,
+                   Control.Parallel.HdpH.Closure.Static.Type
+  build-depends:   template-haskell,
+                   array >= 0.1 && < 0.5,
+                   base >= 4 && < 5,
+                   cereal >= 0.3.3 && < 0.4,
+                   bytestring == 0.10.*,
+                   containers >= 0.1 && < 0.6,
+                   deepseq >= 1.1 && < 2
+  hs-source-dirs:  src
+  ghc-options:     -Wall

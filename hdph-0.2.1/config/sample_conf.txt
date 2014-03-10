@@ -1,0 +1,23 @@
+bwlf01 { path = /MACS/BWLF/%HOSTNAME }
+bwlf02 { path = /MACS/BWLF/%HOSTNAME }
+bwlf03 { path = /MACS/BWLF/%HOSTNAME }
+bwlf04 { path = /MACS/BWLF/%HOSTNAME }
+bwlf05 { path = /MACS/BWLF/%HOSTNAME }
+bwlf06 { path = /MACS/BWLF/%HOSTNAME }
+bwlf07 { path = /MACS/BWLF/%HOSTNAME }
+bwlf08 { path = /MACS/BWLF/%HOSTNAME }
+lxdsg2 { path = /MACS/STAFF/%HOSTNAME/%PID }
+linux10 { path = /MACS/LAB/%HOSTNAME/%PID }
+linux11 { path = /MACS/LAB/%HOSTNAME/%PID }
+linux12 { path = /MACS/LAB/%HOSTNAME/%PID }
+linux13 { path = /MACS/LAB/%HOSTNAME/%PID }
+linux14 { path = /MACS/LAB/%HOSTNAME/%PID }
+linux15 { path = /MACS/LAB/%HOSTNAME/%PID }
+linux16 { path = /MACS/LAB/%HOSTNAME/%PID }
+linux17 { path = /MACS/LAB/%HOSTNAME/%PID }
+linux18 { path = /MACS/LAB/%HOSTNAME/%PID }
+linux19 { path = /MACS/LAB/%HOSTNAME/%PID }
+
+FSC { path = /OTHER/HOME/%HOSTNAME%PID }
+
+NB305 { path = /OTHER/HOME/%HOSTNAME/%PID, nic = eth1 }

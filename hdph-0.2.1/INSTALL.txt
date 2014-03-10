@@ -1,0 +1,29 @@
+## INSTALLING hdph-0.2.1
+##
+## Requires: cabal-dev, ghc-7.6.3, mpiexec on $PATH
+##
+
+##
+## Alt 1) with UDP node discovery
+##
+
+cabal-dev install ../hdph-closure-0.1.1.tar.gz
+
+cabal-dev install
+
+mpiexec -n 3 dist/build/hello/hello +HdpH -numProcs=3 -HdpH
+
+
+##
+## Alt 2) with MPI node discovery
+##
+
+## Install hdph-mpi-allgather-0.0.2 as per instructions there
+##   (without "--flags=BuildTest")
+
+cabal-dev install ../hdph-closure-0.1.1.tar.gz
+
+cabal-dev install --flags=WithMPI
+
+export LD_LIBRARY_PATH= ## see installation of hdph-mpi-allgather
+mpiexec -n 3 dist/build/hello/hello

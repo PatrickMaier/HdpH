@@ -1,0 +1,8 @@
+## INSTALLING hdph-mpi-allgather-0.0.2 on MACS Beowulf cluster
+##
+## Requires: cabal-dev, ghc-7.6.3, mpiexec on $PATH
+##
+
+cabal-dev install --flags=LibMPICH2 --flags=BuildTest --extra-include-dirs=$HOME/sw/mpich2/1.4.1p1/x86_64/include --extra-lib-dirs=$HOME/sw/mpich2/1.4.1p1/x86_64/lib
+
+LD_LIBRARY_PATH=$HOME/sw/mpich2/1.4.1p1/x86_64/lib mpiexec -hosts bwlf01,bwlf02,bwlf03,bwlf04 -n 400 dist/build/TestAllgather/TestAllgather

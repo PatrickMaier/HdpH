@@ -1,0 +1,8 @@
+## INSTALLING hdph-mpi-allgather-0.0.2 on FSC
+##
+## Requires: cabal-dev, ghc-7.6.3, mpiexec on $PATH
+##
+
+cabal-dev install --flags=LibOpenMPI --flags=BuildTest --extra-include-dirs=$HOME/sw/openmpi/include --extra-lib-dirs=$HOME/sw/openmpi/lib
+
+LD_LIBRARY_PATH=$HOME/sw/openmpi/lib mpiexec -n 100 dist/build/TestAllgather/TestAllgather
