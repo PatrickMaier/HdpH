@@ -138,7 +138,7 @@ declareStatic = mconcat
 --
 -- The semantics of HdpH was developed with fault tolerance in mind (though
 -- this version of HdpH is not yet fault tolerant). In particular, HdpH
--- allows the replication computations, and the racing of computations
+-- allows the replication of computations, and the racing of computations
 -- against each other. The price to pay for these features is that HdpH
 -- cannot enforce determinism.
 

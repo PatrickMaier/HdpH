@@ -1,5 +1,5 @@
 name:          hdph-closure
-version:       0.1.1
+version:       0.2.0
 synopsis:      Explicit closures in Haskell distributed parallel Haskell
 description:   Explicit closures are serialisable representations of thunks.
                This package exports the fully polymorphic explicit closures
@@ -16,6 +16,11 @@ tested-with:   GHC == 7.6.3
 build-type:    Simple
 cabal-version: >= 1.8
 
+Flag BuildTest
+  description:     Build test suite.
+  default:         False
+  manual:          True
+
 Library
   exposed-modules: Control.Parallel.HdpH.Closure
   other-modules:   Control.Parallel.HdpH.Closure.Internal,
@@ -31,3 +36,35 @@ Library
                    deepseq >= 1.1 && < 2
   hs-source-dirs:  src
   ghc-options:     -Wall
+
+Executable overhead
+  main-is:         overhead.hs
+  if flag(BuildTest)
+    build-depends: template-haskell,
+                   array >= 0.1 && < 0.5,
+                   base >= 4 && < 5,
+                   cereal >= 0.3.3 && < 0.4,
+                   bytestring == 0.10.*,
+                   containers >= 0.1 && < 0.6,
+                   deepseq >= 1.1 && < 2,
+                   time >= 1.2 && < 2
+  else
+    buildable:     False
+  hs-source-dirs:  src, test
+  ghc-options:     -Wall -rtsopts
+
+Executable nested
+  main-is:         nested.hs
+  if flag(BuildTest)
+    build-depends: template-haskell,
+                   array >= 0.1 && < 0.5,
+                   base >= 4 && < 5,
+                   cereal >= 0.3.3 && < 0.4,
+                   bytestring == 0.10.*,
+                   containers >= 0.1 && < 0.6,
+                   deepseq >= 1.1 && < 2,
+                   time >= 1.2 && < 2
+  else
+    buildable:     False
+  hs-source-dirs:  src, test
+  ghc-options:     -Wall -rtsopts

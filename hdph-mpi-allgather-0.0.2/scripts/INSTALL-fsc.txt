@@ -1,4 +1,4 @@
-## INSTALLING hdph-mpi-allgather-0.0.2 on FSC
+## INSTALLING hdph-mpi-allgather-0.0.1 on FSC
 ##
 ## Requires: cabal-dev, ghc-7.6.3, mpiexec on $PATH
 ##

@@ -1,4 +1,4 @@
-## INSTALLING hdph-mpi-allgather-0.0.2 on MACS Beowulf cluster
+## INSTALLING hdph-mpi-allgather-0.0.1 on MACS Beowulf cluster
 ##
 ## Requires: cabal-dev, ghc-7.6.3, mpiexec on $PATH
 ##

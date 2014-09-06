@@ -20,7 +20,7 @@ This release is considered alpha stage.
 Building this package
 ---------------------
 
-This package has been tested with OpenMPI 1.4.3 and MPICH2 1.4.1p1.
+This package has been tested with OpenMPI 1.4.3, MPICH2 1.4.1p1 and MPICH 3.1.
 The cabal file has been deliberately stripped of specifics of particular
 MPI implementations, so all information about libraries and includes must
 be provided on the command line. (Someone should write autoconf scripts to
@@ -37,6 +37,9 @@ hdph-mpi-allgather.
 
 * At Heriot-Watt, with MPICH2:
   `cabal-dev install --flags=LibMPICH2 --extra-include-dirs=$HOME/sw/mpich2/1.4.1p1/$ARCH/include --extra-lib-dirs=$HOME/sw/mpich2/1.4.1p1/$ARCH/lib`
+
+* At Glasgow, with MPICH:
+  `cabal-dev install --flags=LibMPICH2 --extra-include-dirs=$HOME/sw/mpich/3.1/$ARCH/include --extra-lib-dirs=$HOME/sw/mpich/3.1/$ARCH/lib`
 
 * On HECToR, with Cray's own MPICH variant:
 

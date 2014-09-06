@@ -97,7 +97,7 @@ import System.Random (randomRIO)
 import Control.Parallel.HdpH 
        (Par, io, fork, pushTo, {- spark, -} new, get, glob, rput, equiDist,
         Node, IVar, GIVar,
-        Env, LocT, here, Thunk(Thunk),
+        LocT, here, Thunk(Thunk), CDict,
         Closure, unClosure, mkClosure, mkClosureLoc, apC, compC,
         ToClosure, toClosure, forceClosure,
         Static, static, staticLoc,
@@ -173,16 +173,11 @@ rdeepseq x = x `deepseq` return x  -- Order of eval irrelevant (2nd arg conv)
 -- the thunk inside an explicit @'Closure'@.
 -- Importantly, @forceC@ alters the serialisable @'Closure'@ represention
 -- so that serialisation will not force the @'Closure'@ again.
-forceC :: (NFData a, ToClosure a) => Strategy (Closure a)
+forceC :: (ToClosure a) => Strategy (Closure a)
 forceC clo = return $! forceClosure clo
 
 -- Note that 'forceC clo' does not have the same effect as
--- * 'rdeepseq clo' (because 'forceC' changes the closure representation), or
--- * 'rdeepseq $ toClosure $ unClosure clo' (because 'forceC' does not force
---   the serialised environment of its result), or
--- * 'rdeepseq clo >> return (toClosure (unClosure clo))' (because this does
---   hang on to the old serialisable environment whereas 'forceC' replaces
---   the old enviroment with a new one).
+-- 'rdeepseq clo' because 'forceC' changes the closure representation.
 --
 -- Note that it does not make sense to construct a variant of 'forceC' that
 -- would evaluate the thunk inside a Closure head-strict only. The reason is
@@ -195,10 +190,14 @@ forceC clo = return $! forceClosure clo
 -- To enable passing strategy @'forceC'@ around in distributed contexts, it
 -- has to be wrapped into a @'Closure'@. That is, this module should export
 --
--- > forceCC :: (NFData a, ToClosure a) => Closure (Strategy (Closure a))
+-- > forceCC :: (ToClosure a) => Closure (Strategy (Closure a))
 --
 -- The tutorial in module 'Control.Parallel.HdpH.Closure' details how to cope
 -- with the type class constraint by introducing a new class.
+
+-- Q: Do we really need class ForceCC?
+-- A: Yes, we do. Instantiating ForceCC serves as a reminder that we also
+--    need to declare the corresponding Static declaration.
 
 -- | @forceCC@ is a @'Closure'@ wrapping the fully forcing Closure strategy
 -- @'forceC'@; see the tutorial in module 'Control.Parallel.HdpH.Closure' for
@@ -209,7 +208,7 @@ forceCC = $(mkClosureLoc [| forceC |]) locForceCC
 -- | Indexing class, recording which types support @'forceCC'@; see the
 -- tutorial in module 'Control.Parallel.HdpH.Closure' for a more thorough
 -- explanation.
-class (NFData a, ToClosure a) => ForceCC a where
+class (ToClosure a) => ForceCC a where
   -- | Only method of class @ForceCC@, recording the source location
   -- where an instance of @ForceCC@ is declared.
   locForceCC :: LocT (Strategy (Closure a))
@@ -219,7 +218,7 @@ class (NFData a, ToClosure a) => ForceCC a where
 -- | Type synonym for declaring the @'Static'@ deserialisers required by
 -- @'ForceCC'@ instances; see the tutorial in module
 -- 'Control.Parallel.HdpH.Closure' for a more thorough explanation.
-type StaticForceCC a = Static (Env -> Thunk (Strategy (Closure a)))
+type StaticForceCC a = Static (CDict () (Strategy (Closure a)))
 
 -- | @'Static'@ deserialiser required by a 'ForceCC' instance; see the tutorial
 -- in module 'Control.Parallel.HdpH.Closure' for a more thorough explanation.

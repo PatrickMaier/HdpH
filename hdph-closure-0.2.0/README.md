@@ -11,7 +11,7 @@ the network.
 This package exports the fully polymorphic explicit closure representation
 of HdpH, for use by HdpH or other packages.
 
-HdpH, including the explicit closure representation, is described in some detail in the paper [Implementing a High-level Distributed-Memory Parallel Haskell in Haskell](http://www.macs.hw.ac.uk/~pm175/papers/Maier_Trinder_IFL2011_XT.pdf).
+HdpH, including a previous version of the explicit closure representation, is described in some detail in the paper [Implementing a High-level Distributed-Memory Parallel Haskell in Haskell](http://www.macs.hw.ac.uk/~pm175/papers/Maier_Trinder_IFL2011_XT.pdf).
 
 This release is considered alpha stage.
 
