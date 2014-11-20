@@ -28,6 +28,17 @@ import Control.Parallel.HdpH.Closure
         toClosure, ToClosure(locToClosure),
         StaticToClosure, staticToClosure,
         StaticDecl, declare, register, here)
+import qualified Control.Parallel.HdpH.Closure (declareStatic)
+
+-----------------------------------------------------------------------------
+-- split a list into a list of fixed size chunks
+
+chunk :: Int -> [a] -> [[a]]
+chunk k xs | k <= 0 = error "chunk: chunk size non-positive"
+           | otherwise = go xs
+              where           
+                go [] = []
+                go zs = pref : go suff where (pref,suff) = splitAt k zs
 
 
 -----------------------------------------------------------------------------
@@ -40,25 +51,25 @@ timeIO action = do t0 <- getCurrentTime
 
 
 -----------------------------------------------------------------------------
--- serialize a list of Ints
+-- measure serialisation of a list of lists of Ints
 
-measureListInt :: Int -> Int -> IO ((Int, Int), NominalDiffTime)
-measureListInt n x =
+measureListListInt :: [[Int]] -> IO ((Int, Int), NominalDiffTime)
+measureListListInt xss =
   timeIO $ do
-    let bs = encode $ take n [x ..]
+    let bs = encode xss
     evaluate (bs `deepseq` ())
     let !sz = BS.length bs
-    let !z  = sum $ either error id $ decode bs
+    let !z  = sum $ concat $ either error id $ decode bs
     evaluate ((z, sz))
 
 
 -----------------------------------------------------------------------------
--- serialize a closure containing a list of Ints
+-- measure serialisation of a closure containing a list of lists of Ints
 
-measureCloListInt :: Int -> Int -> IO ((Int, Int), NominalDiffTime)
-measureCloListInt n x =
+measureCloListListInt :: [[Int]] -> IO ((Int, Int), NominalDiffTime)
+measureCloListListInt xss =
   timeIO $ do
-    let clo = toClosure $ take n [x ..] :: Closure [Int]
+    let clo = toClosure xss :: Closure [[Int]]
     let bs = encode clo
     evaluate (bs `deepseq` ())
     let !sz = BS.length bs
@@ -67,35 +78,34 @@ measureCloListInt n x =
 
 
 -----------------------------------------------------------------------------
--- serialize a list of Int closures
+-- measure serialisation of a list of closures, each containing a list of Ints
 
-measureListCloInt :: Int -> Int -> IO ((Int, Int), NominalDiffTime)
-measureListCloInt n x =
+measureListCloListInt :: [[Int]] -> IO ((Int, Int), NominalDiffTime)
+measureListCloListInt xss =
   timeIO $ do
-    let clos = map toClosure $ take n [x ..] :: [Closure Int]
-    let bs = encode clos
-    evaluate (bs `deepseq` ())
-    let !sz = BS.length bs
-    let !z  = sum $ map unClosure $ either error id $ decode bs
-    evaluate ((z, sz))
-
-
------------------------------------------------------------------------------
--- serialize a list of closures, each containing a list of Ints
-
-measureListCloListInt :: Int -> Int -> Int -> IO ((Int, Int), NominalDiffTime)
-measureListCloListInt n x k =
-  timeIO $ do
-    let clos = map toClosure $ chunk k $ take n [x ..] :: [Closure [Int]]
+    let clos = map toClosure xss :: [Closure [Int]]
     let bs = encode clos
     evaluate (bs `deepseq` ())
     let !sz = BS.length bs
     let !z  = sum $ concat $ map unClosure $ either error id $ decode bs
     evaluate ((z, sz))
 
-chunk :: Int -> [a] -> [[a]]
-chunk _ [] = []
-chunk k xs = ys : chunk k zs where (ys,zs) = splitAt k xs
+
+-----------------------------------------------------------------------------
+-- measure serialisation of a closure containing a list of closures,
+-- each containing a list of Ints
+
+measureCloListCloListInt :: [[Int]] -> IO ((Int, Int), NominalDiffTime)
+measureCloListCloListInt xss =
+  timeIO $ do
+    let clos = map toClosure xss :: [Closure [Int]]
+    let clo = toClosure clos :: Closure [Closure [Int]]
+    let bs = encode clo
+    evaluate (bs `deepseq` ())
+    let !sz = BS.length bs
+    let !z  = sum $ concat $ map unClosure $ unClosure $
+                either error id $ decode bs
+    evaluate ((z, sz))
 
 
 -----------------------------------------------------------------------------
@@ -105,14 +115,15 @@ chunk k xs = ys : chunk k zs where (ys,zs) = splitAt k xs
 $(return [])
 
 -- orphan ToClosure instances (unavoidably so)
-instance ToClosure Int where locToClosure = $(here)
 instance ToClosure [Int] where locToClosure = $(here)
+instance ToClosure [[Int]] where locToClosure = $(here)
 
 declareStatic :: StaticDecl
 declareStatic =
   mconcat
-    [declare (staticToClosure :: StaticToClosure Int),
-     declare (staticToClosure :: StaticToClosure [Int])]
+    [Control.Parallel.HdpH.Closure.declareStatic,
+     declare (staticToClosure :: StaticToClosure [Int]),
+     declare (staticToClosure :: StaticToClosure [[Int]])]
 
 
 -----------------------------------------------------------------------------
@@ -148,14 +159,14 @@ main :: IO ()
 main = do
   register declareStatic
   (version, n, x, k) <- parseArgs <$> getArgs
+  let xss = chunk k $ take n [x ..]
   -- dispatch on version
   ((z, sz), t) <- case version of
-                    0 -> measureListInt n x
-                    1 -> measureCloListInt n x
-                    2 -> measureListCloInt n x
-                    3 -> measureListCloListInt n x k
+                    0 -> measureListListInt xss
+                    1 -> measureCloListListInt xss
+                    2 -> measureListCloListInt xss
+                    3 -> measureCloListCloListInt xss
                     _  -> error $ "version v" ++ show version ++ " unsupported"
-  putStrLn $ "{v" ++ show version ++
-             ", n=" ++ show n ++ ", x=" ++ show x ++
-             ", k=" ++ show k ++ "} sum=" ++ show z ++
+  putStrLn $ "{v" ++ show version ++ ", chunk " ++ show k ++
+             " $ take " ++ show n ++ " [" ++ show x ++ " ..]} sum=" ++ show z ++
              " {t=" ++ show t ++ ", size=" ++ show sz ++ "bytes}"

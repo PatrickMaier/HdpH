@@ -24,6 +24,7 @@ import System.Environment (getArgs)
 import Control.Parallel.HdpH.Closure
        (Closure, mkClosure, unClosure, Thunk(Thunk),
         StaticDecl, static, declare, register)
+import qualified Control.Parallel.HdpH.Closure (declareStatic)
 
 -----------------------------------------------------------------------------
 -- time an IO action
@@ -143,7 +144,8 @@ $(return [])
 declareStatic :: StaticDecl
 declareStatic =
   mconcat
-    [declare $(static 'reduce_abs),
+    [Control.Parallel.HdpH.Closure.declareStatic,
+     declare $(static 'reduce_abs),
      declare $(static 'mkFlat_abs),
      declare $(static 'mkNested_abs)]
 
