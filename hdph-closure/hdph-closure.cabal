@@ -1,5 +1,5 @@
 name:          hdph-closure
-version:       0.2.0
+version:       0.2.1
 synopsis:      Explicit closures in Haskell distributed parallel Haskell
 description:   Explicit closures are serialisable representations of thunks.
                This package exports the fully polymorphic explicit closures
@@ -12,7 +12,7 @@ author:        Patrick Maier <C.Patrick.Maier@gmail.com>
 maintainer:    Patrick Maier <C.Patrick.Maier@gmail.com>
 stability:     experimental
 category:      Control, Distributed Computing
-tested-with:   GHC == 7.6.3
+tested-with:   GHC == 7.8.2
 build-type:    Simple
 cabal-version: >= 1.8
 
@@ -28,9 +28,9 @@ Library
                    Control.Parallel.HdpH.Closure.Static.State,
                    Control.Parallel.HdpH.Closure.Static.Type
   build-depends:   template-haskell,
-                   array >= 0.1 && < 0.5,
+                   array >= 0.1 && < 0.6,
                    base >= 4 && < 5,
-                   cereal >= 0.3.3 && < 0.4,
+                   cereal == 0.4.*,
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2
@@ -41,9 +41,9 @@ Executable overhead
   main-is:         overhead.hs
   if flag(BuildTest)
     build-depends: template-haskell,
-                   array >= 0.1 && < 0.5,
+                   array >= 0.1 && < 0.6,
                    base >= 4 && < 5,
-                   cereal >= 0.3.3 && < 0.4,
+                   cereal == 0.4.*,
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
@@ -51,15 +51,15 @@ Executable overhead
   else
     buildable:     False
   hs-source-dirs:  src, test
-  ghc-options:     -Wall -rtsopts
+  ghc-options:     -Wall -rtsopts -O0
 
 Executable nested
   main-is:         nested.hs
   if flag(BuildTest)
     build-depends: template-haskell,
-                   array >= 0.1 && < 0.5,
+                   array >= 0.1 && < 0.6,
                    base >= 4 && < 5,
-                   cereal >= 0.3.3 && < 0.4,
+                   cereal == 0.4.*,
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
@@ -67,4 +67,20 @@ Executable nested
   else
     buildable:     False
   hs-source-dirs:  src, test
-  ghc-options:     -Wall -rtsopts
+  ghc-options:     -Wall -rtsopts -O0
+
+Executable toClosure
+  main-is:         toClosure.hs
+  if flag(BuildTest)
+    build-depends: template-haskell,
+                   array >= 0.1 && < 0.6,
+                   base >= 4 && < 5,
+                   cereal == 0.4.*,
+                   bytestring == 0.10.*,
+                   containers >= 0.1 && < 0.6,
+                   deepseq >= 1.1 && < 2,
+                   time >= 1.2 && < 2
+  else
+    buildable:     False
+  hs-source-dirs:  src, test
+  ghc-options:     -Wall -rtsopts -O0
