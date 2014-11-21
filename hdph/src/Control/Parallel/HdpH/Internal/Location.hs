@@ -48,7 +48,7 @@ import Control.DeepSeq (NFData, rnf)
 import Control.Exception (catch, evaluate)
 import Control.Monad (when)
 import Data.Functor ((<$>))
-import qualified Data.Hashable (Hashable, hash)
+import qualified Data.Hashable (hash)
 import Data.IORef (readIORef)
 import Data.Serialize (Serialize, put, get)
 import qualified Network.Transport as NT (EndPointAddress(..))
@@ -178,4 +178,3 @@ dbgGRef      = 9  -- registry update
 
 deriving instance NFData NT.EndPointAddress
 deriving instance Serialize NT.EndPointAddress
-deriving instance Data.Hashable.Hashable NT.EndPointAddress

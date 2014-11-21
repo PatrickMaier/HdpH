@@ -30,7 +30,8 @@ import Data.Maybe (isJust)
 
 import Control.Parallel.HdpH.Internal.Location 
        (Node, debug, dbgGIVar, dbgIVar)
-import Control.Parallel.HdpH.Internal.GRef (GRef, at, globalise, free, withGRef)
+import Control.Parallel.HdpH.Internal.GRef
+       (GRef, at, globalise, freeNow, withGRef)
 import Control.Parallel.HdpH.Internal.Type.Par (Thread)
 
 
@@ -79,9 +80,9 @@ putIVar v x = do
       where
      -- fill_and_unblock :: IVarContent m a ->
      --                       (IVarContent m a, Maybe ([Thread m], [Thread m]))
-        fill_and_unblock e =
-          case e of
-            Full _          -> (e,      Nothing)
+        fill_and_unblock st =
+          case st of
+            Full _          -> (st,     Nothing)
             Blocked hcs lcs -> (Full x, Just (map ($ x) hcs, map ($ x) lcs))
 
 
@@ -100,9 +101,9 @@ getIVar hi v c = do
                                       return maybe_x
       where
      -- get_or_block :: IVarContent m a -> (IVarContent m a, Maybe a)
-        get_or_block e =
-          case e of
-            Full x                      -> (e,                   Just x)
+        get_or_block st =
+          case st of
+            Full x                      -> (st,                   Just x)
             Blocked hcs lcs | hi        -> (Blocked (c:hcs) lcs, Nothing)
                             | otherwise -> (Blocked hcs (c:lcs), Nothing)
 
@@ -158,5 +159,5 @@ putGIVar :: Int -> GIVar m a -> a -> IO ([Thread m], [Thread m])
 putGIVar _schedID gv x = do
   debug dbgGIVar $ "Put to global IVar " ++ show gv
   ts <- withGRef gv (\ v -> putIVar v x) (return ([],[]))
-  free gv    -- free 'gv' (eventually); could use 'freeNow' instead of 'free'
+  freeNow gv  -- free 'gv' immediately; could use 'free' instead of 'freeNow'
   return ts

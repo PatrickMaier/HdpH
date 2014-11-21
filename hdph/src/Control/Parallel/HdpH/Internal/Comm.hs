@@ -30,7 +30,7 @@ module Control.Parallel.HdpH.Internal.Comm
   ) where
 
 import Prelude
-import Control.Concurrent (forkIO, killThread, threadDelay)
+import Control.Concurrent (forkIO, killThread)
 import Control.Concurrent.Chan (newChan, readChan, writeChan)
 import Control.DeepSeq (($!!))
 import Control.Exception (finally)
@@ -39,8 +39,7 @@ import Data.ByteString as Strict (ByteString)
 import qualified Data.ByteString.Lazy as LBS (toChunks, fromChunks)
 import Data.Functor ((<$>))
 import Data.IORef (readIORef, writeIORef, atomicModifyIORef)
-import Data.Serialize (Serialize, encode, decode)
-import qualified Data.Serialize (put, get)
+import Data.Serialize (encode, decode)
 import Data.List (delete)
 
 import Network.Info (IPv4, ipv4, name, getNetworkInterfaces)
@@ -48,10 +47,12 @@ import qualified Network.Transport as NT
 import qualified Network.Transport.TCP as TCP
 
 import Control.Parallel.HdpH.Conf (RTSConf(..))
+import Control.Parallel.HdpH.Dist (zero)
 import Control.Parallel.HdpH.Internal.Location 
        (Node, address, mkNode, dbgNone)
 import Control.Parallel.HdpH.Internal.State.Location
        (myNodeRef, allNodesRef, debugRef)
+import qualified Control.Parallel.HdpH.Internal.Data.DistMap as DistMap
 import Control.Parallel.HdpH.Internal.Topology (Bases, equiDistMap)
 import Control.Parallel.HdpH.Internal.Type.Comm (State(..), Payload, PayloadQ)
 import Control.Parallel.HdpH.Internal.State.Comm (stateRef)
@@ -75,18 +76,6 @@ candidateSockets = take 128 $ [8001, 8097 .. 40000]
 
 
 -----------------------------------------------------------------------------
--- CommM monad (mock up; monad to be deleted; defined-not-used)
-
-type CommM a = IO a
-
-liftIO :: IO a -> CommM a
-liftIO = id
-
-run_ :: RTSConf -> CommM () -> IO ()
-run_ = withCommDo
-
-
------------------------------------------------------------------------------
 -- access to individual bits of state
 
 -- RTS configuration
@@ -107,14 +96,25 @@ allNodes = s_allNodes <$> readIORef stateRef
 equiDistBases :: IO Bases
 equiDistBases = s_bases <$> readIORef stateRef
 
--- The currently executing node
--- OBSOLETE: should be computed from equiDistBases
+-- The currently executing node.
+-- Version relies on equidistant bases; it would be simpler to just store
+-- the current node in a dedicated field in the state of the Comm module.
+myNode :: IO Node
+myNode = do
+  bases <- equiDistBases
+  case DistMap.lookup zero bases of
+    [(this,1)] -> return this
+    _          -> error $ thisModule ++ "myNode: panic - impossible case"
+{-
+-- Old version; relying on the list of all nodes.
+-- Phased out because the list of all nodes is to be phased out.
 myNode :: IO Node
 myNode = do
   ns <- allNodes
   case ns of
     this:_ -> return this
     []     -> error $ thisModule ++ ".myNode: not initialised"
+-}
 
 -- The root node;
 -- should not be called before initialisation has been completed
@@ -216,7 +216,9 @@ withCommDo conf0 action = do
       (s { s_nodes = n, s_allNodes = all_nodes, s_bases = bases, s_root = root,
            s_conns = conns }, ())
 
-    -- set current node in Location module; should be OBSOLETE!!!
+    -- set current node in Location module
+    -- NOTE: HdpH still relies on state in Location module;
+    --       this should be changed in the future.
     writeIORef myNodeRef me
     writeIORef allNodesRef all_nodes
     writeIORef debugRef (debugLvl conf0)
@@ -225,17 +227,6 @@ withCommDo conf0 action = do
 
     -- run action
     action)
-
-{- OBSOLETE, hopefully !!!
-    -- delay shutdown of the root node by half a second;
-    -- this avoids killing ongoing communications which appear to non-root
-    -- nodes as "connection to root node lost".
-    -- Better: Proper protocol to acknowledge shutdown of HpdH RTS across
-    --         all nodes prior to Comm shutdown.
-    case root of
-      Nothing -> threadDelay 500000  -- TODO: Elim delay!!!
-      _       -> return ())
--}
 
     -- shutdown
     `finally` killThread listener_tid
@@ -289,11 +280,6 @@ connectToAllNodes all_nodes = do
          case c of
            Left _     -> connectTo ep node  -- keep re-trying
            Right conn -> return conn
-
-
--- Serialize node.
-encodeNode :: Node -> Strict.ByteString
-encodeNode = encode
 
 
 -- Deserialize node; abort on error.

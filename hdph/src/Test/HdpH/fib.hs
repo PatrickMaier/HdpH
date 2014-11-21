@@ -37,27 +37,6 @@ import qualified Control.Parallel.HdpH.Strategies as Strategies (declareStatic)
 
 
 -----------------------------------------------------------------------------
--- 'Static' declaration
-
--- orphan ToClosure instances (unavoidably so)
-instance ToClosure Int where locToClosure = $(here)
-instance ToClosure Integer where locToClosure = $(here)
-
-declareStatic :: StaticDecl
-declareStatic =
-  mconcat
-    [HdpH.declareStatic,         -- declare Static deserialisers
-     Strategies.declareStatic,   -- from imported modules
-     declare (staticToClosure :: StaticToClosure Int),
-     declare (staticToClosure :: StaticToClosure Integer),
-     declare $(static 'dist_fib_abs),
-     declare $(static 'dnc_trivial_abs),
-     declare $(static 'dnc_decompose),
-     declare $(static 'dnc_combine),
-     declare $(static 'dnc_f)]
-
-
------------------------------------------------------------------------------
 -- sequential Fibonacci
 
 fib :: Int -> Integer
@@ -147,6 +126,30 @@ push_skel_fib nodes seqThreshold n = unClosure <$> skel (toClosure n)
              $(mkClosure [| dnc_decompose |])
              $(mkClosure [| dnc_combine |])
              $(mkClosure [| dnc_f |])
+
+
+-----------------------------------------------------------------------------
+-- Static declaration (just before 'main')
+
+-- Empty splice; TH hack to make all environment abstractions visible.
+$(return [])
+
+-- orphan ToClosure instances (unavoidably so)
+instance ToClosure Int where locToClosure = $(here)
+instance ToClosure Integer where locToClosure = $(here)
+
+declareStatic :: StaticDecl
+declareStatic =
+  mconcat
+    [HdpH.declareStatic,         -- declare Static deserialisers
+     Strategies.declareStatic,   -- from imported modules
+     declare (staticToClosure :: StaticToClosure Int),
+     declare (staticToClosure :: StaticToClosure Integer),
+     declare $(static 'dist_fib_abs),
+     declare $(static 'dnc_trivial_abs),
+     declare $(static 'dnc_decompose),
+     declare $(static 'dnc_combine),
+     declare $(static 'dnc_f)]
 
 
 -----------------------------------------------------------------------------

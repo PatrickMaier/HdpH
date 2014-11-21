@@ -10,67 +10,68 @@
 
 module Control.Parallel.HdpH.Internal.Misc
   ( -- * existential wrapper type
-    AnyType(..),  -- no instances
+    AnyType(..),   -- no instances
 
     -- * monads supporting forking of threads
-    Forkable(     -- context: (Monad m) => Forkable m
-      fork,       -- ::        m () -> m Control.Concurrent.ThreadId
-      forkOn      -- :: Int -> m () -> m Control.Concurrent.ThreadId
+    Forkable(      -- context: (Monad m) => Forkable m
+      fork,        -- ::        m () -> m Control.Concurrent.ThreadId
+      forkOn       -- :: Int -> m () -> m Control.Concurrent.ThreadId
     ),
 
     -- * continuation monad with stricter bind
-    Cont(..),     -- instances: Functor, Monad
+    Cont(..),      -- instances: Functor, Monad
 
     -- * rotate a list (to the left)
-    rotate,       --  :: Int -> [a] -> [a]
+    rotate,        --  :: Int -> [a] -> [a]
 
     -- * return prefix of a list until predicate is satisfied.
-    takeUntil,    --  :: (a -> Bool) -> [a] -> [a]
+    takeWeakUntil, --  :: (a -> Bool) -> [a] -> [a]
 
     -- * force spine of given list
-    forceSpine,   --  :: [a] -> [a]
+    forceSpine,    --  :: [a] -> [a]
 
     -- * random permutation of given list
-    shuffle,      --  :: [a] -> IO [a]
+    shuffle,       --  :: [a] -> IO [a]
 
     -- * decode ByteStrings (without error reporting)
-    decode,       -- :: Serialize a => Strict.ByteString -> a
-    decodeLazy,   -- :: Serialize a => Lazy.ByteString -> a
+    decode,        -- :: Serialize a => Strict.ByteString -> a
+    decodeLazy,    -- :: Serialize a => Lazy.ByteString -> a
 
     -- * encode ByteStrings (companions to the decoders above)
-    encode,       -- :: Serialize a => a -> Strict.ByteString
-    encodeLazy,   -- :: Serialize a => a -> Lazy.ByteString
+    encode,        -- :: Serialize a => a -> Strict.ByteString
+    encodeLazy,    -- :: Serialize a => a -> Lazy.ByteString
 
     -- * encode/decode lists of bytes
-    encodeBytes,  -- :: Serialize a => a -> [Word8]
-    decodeBytes,  -- :: Serialize a => [Word8] -> a
+    encodeBytes,   -- :: Serialize a => a -> [Word8]
+    decodeBytes,   -- :: Serialize a => [Word8] -> a
 
     -- * destructors of Either values
-    fromLeft,     -- :: Either a b -> a
-    fromRight,    -- :: Either a b -> b
+    fromLeft,      -- :: Either a b -> a
+    fromRight,     -- :: Either a b -> b
 
     -- * splitting a list
-    splitAtFirst, -- :: (a -> Bool) -> [a] -> Maybe ([a], a, [a])
+    splitAtFirst,  -- :: (a -> Bool) -> [a] -> Maybe ([a], a, [a])
 
     -- * To remove an Eq element from a list
-    rmElems, -- :: Eq a => a -> [a] -> [a]
+    rmElems,       -- :: Eq a => a -> [a] -> [a]
 
     -- * action servers
-    Action,       -- synonym: IO ()
-    ActionServer, -- abstract, no instances
-    newServer,    -- :: IO ActionServer
-    killServer,   -- :: ActionServer -> IO ()
-    reqAction,    -- :: ActionServer -> Action -> IO ()
+    Action,        -- synonym: IO ()
+    ActionServer,  -- abstract, no instances
+    newServer,     -- :: IO ActionServer
+    killServer,    -- :: ActionServer -> IO ()
+    reqAction,     -- :: ActionServer -> Action -> IO ()
 
     -- * timing IO actions
-    timeIO        -- :: IO a -> IO (a, NominalDiffTime)
+    timeIO         -- :: IO a -> IO (a, NominalDiffTime)
   ) where
 
 import Prelude hiding (error)
+import Control.Applicative (Applicative, pure, (<*>))
 import Control.Concurrent (ThreadId)
 import qualified Control.Concurrent (forkIO, forkOn, killThread)
 import Control.Concurrent.Chan (Chan, newChan, writeChan, readChan)
-import Control.Monad (join)
+import Control.Monad (join, ap)
 import Control.Monad.Reader (ReaderT, runReaderT, ask)
 import Control.Monad.Trans (lift)
 import qualified Data.ByteString 
@@ -82,7 +83,6 @@ import Data.Serialize (Serialize)
 import qualified Data.Serialize (encode, decode, encodeLazy, decodeLazy)
 import Data.Time.Clock (NominalDiffTime, diffUTCTime, getCurrentTime)
 import Data.Word (Word8)
-import qualified GHC.Conc (forkOn)  -- GHC specific!
 import System.Random (randomRIO)
 
 import Control.Parallel.HdpH.Internal.Location (error)
@@ -95,17 +95,17 @@ rotate :: Int -> [a] -> [a]
 rotate _ [] = []
 rotate n xs = zipWith const (drop n $ cycle xs) xs
 
-takeUntil :: (a -> Bool) -> [a] -> [a]
-takeUntil _ []                 =  []
-takeUntil p (x:xs) | p x       =  [x]
-                   | otherwise =  x : takeUntil p xs
+takeWeakUntil :: (a -> Bool) -> [a] -> [a]
+takeWeakUntil _ []                 =  []
+takeWeakUntil p (x:xs) | p x       =  [x]
+                       | otherwise =  x : takeWeakUntil p xs
 
 -- Forces the spine of a list.
 forceSpine :: [a] -> [a]
 forceSpine xs = walk xs `seq` xs
   where
     walk []     = ()
-    walk (_:xs) = walk xs
+    walk (_:zs) = walk zs
 
 
 -------------------------------------------------------------------------------
@@ -253,6 +253,10 @@ instance Functor (Cont r) where
 instance Monad (Cont r) where
     return a = Cont $ \ c -> c $! a
     m >>= k  = Cont $ \ c -> runCont m $ \ a -> runCont (k $! a) c
+
+instance Applicative (Cont r) where
+    pure  = return
+    (<*>) = ap
 
 
 -----------------------------------------------------------------------------

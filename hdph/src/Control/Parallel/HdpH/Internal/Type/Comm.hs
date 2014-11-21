@@ -14,7 +14,7 @@ module Control.Parallel.HdpH.Internal.Type.Comm
   ) where
 
 import Prelude
-import Control.Concurrent (MVar, Chan)
+import Control.Concurrent (Chan)
 import Data.ByteString.Lazy as Lazy (ByteString)
 import Network.Transport (Transport, EndPoint, Connection)
 
@@ -31,14 +31,18 @@ data State =
     s_conf     :: RTSConf,       -- config data
     s_nodes    :: Int,           -- number of nodes of parallel machine
     s_allNodes :: [Node],        -- all nodes of parallel machine;
-                                   -- head of list is this node; OBSOLETE
+                                   -- head of list is this node
     s_bases    :: Bases,         -- distance-indexed map of equidistant bases
     s_root     :: Maybe Node,    -- root node (Nothing if this is the root)
     s_msgQ     :: PayloadQ,      -- queue holding received payload messages
     s_tp       :: Transport,     -- this node's transport
     s_ep       :: EndPoint,      -- this node's end point
     s_conns    :: [Connection] } -- connections to all nodes (not scalable)
---  s_shutdown :: MVar () }      -- shutdown signal; OBSOLETE!!!
+--
+-- NOTE: The field 's_allNodes' should be phased out; storing a list of all
+--       nodes at every node does not scale. The information can be recovered
+--       using a recursive computation over the equidistant bases stored in
+--       field 's_bases'.
 
 -- concurrent message queue storing payload messages
 type PayloadQ = Chan Payload

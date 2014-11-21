@@ -34,7 +34,7 @@ import Control.Monad.Trans (lift)
 import Control.Parallel.HdpH.Internal.Data.Deque
        (DequeIO, pushFrontIO, popFrontIO, popBackIO, maxLengthIO)
 import Control.Parallel.HdpH.Internal.Location (error)
-import Control.Parallel.HdpH.Internal.Misc (Forkable, fork, rotate)
+import Control.Parallel.HdpH.Internal.Misc (fork, rotate)
 import Control.Parallel.HdpH.Internal.Sparkpool (SparkM, wakeupSched)
 import qualified Control.Parallel.HdpH.Internal.Sparkpool as Sparkpool
        (liftIO)

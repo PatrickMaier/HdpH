@@ -1,5 +1,5 @@
 name:          hdph
-version:       0.2.2
+version:       0.2.3
 synopsis:      Haskell distributed parallel Haskell
 description:   Haskell distributed parallel Haskell (HdpH) is a Haskell DSL
                for distributed-memory parallelism, implemented entirely in
@@ -12,7 +12,7 @@ author:        Patrick Maier <C.Patrick.Maier@gmail.com>,
 maintainer:    Patrick Maier <C.Patrick.Maier@gmail.com>
 stability:     experimental
 category:      Control, Parallelism, Distributed Computing, Monads
-tested-with:   GHC == 7.6.3
+tested-with:   GHC == 7.6.3 || == 7.8.2
 build-type:    Simple
 cabal-version: >= 1.8
 
@@ -36,29 +36,31 @@ Library
                    Control.Parallel.HdpH.Internal.Misc,
                    Control.Parallel.HdpH.Internal.Scheduler,
                    Control.Parallel.HdpH.Internal.Sparkpool,
+                   Control.Parallel.HdpH.Internal.State.Comm,
                    Control.Parallel.HdpH.Internal.State.GRef,
                    Control.Parallel.HdpH.Internal.State.Location,
                    Control.Parallel.HdpH.Internal.Threadpool,
                    Control.Parallel.HdpH.Internal.Topology,
+                   Control.Parallel.HdpH.Internal.Type.Comm,
                    Control.Parallel.HdpH.Internal.Type.GRef,
                    Control.Parallel.HdpH.Internal.Type.Location,
                    Control.Parallel.HdpH.Internal.Type.Par
   build-depends:   template-haskell,
-                   array >= 0.4 && < 0.5,
+                   array >= 0.4 && < 0.6,
                    base >= 4 && < 5,
-                   cereal >= 0.3.3 && < 0.4,
+                   cereal == 0.4.*,
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
                    hashable >= 1.1 && < 2,
                    mtl >= 2 && < 3,
-                   network == 2.4.*,
+                   network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
-                   network-transport == 0.3.*,
-                   network-transport-tcp == 0.3.*,
+                   network-transport == 0.4.*,
+                   network-transport-tcp == 0.4.*,
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
-                   unix >= 2.6 && < 2.7,
+                   unix >= 2.6 && < 2.8,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall
@@ -74,21 +76,21 @@ Library
 Executable hello
   main-is:         Test/HdpH/hello.hs
   build-depends:   template-haskell,
-                   array >= 0.4 && < 0.5,
+                   array >= 0.4 && < 0.6,
                    base >= 4 && < 5,
-                   cereal >= 0.3.3 && < 0.4,
+                   cereal == 0.4.*,
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
                    hashable >= 1.1 && < 2,
                    mtl >= 2 && < 3,
-                   network == 2.4.*,
+                   network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
-                   network-transport == 0.3.*,
-                   network-transport-tcp == 0.3.*,
+                   network-transport == 0.4.*,
+                   network-transport-tcp == 0.4.*,
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
-                   unix >= 2.6 && < 2.7,
+                   unix >= 2.6 && < 2.8,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
@@ -102,21 +104,21 @@ Executable hello
 Executable dist
   main-is:         Test/HdpH/dist.hs
   build-depends:   template-haskell,
-                   array >= 0.4 && < 0.5,
+                   array >= 0.4 && < 0.6,
                    base >= 4 && < 5,
-                   cereal >= 0.3.3 && < 0.4,
+                   cereal == 0.4.*,
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
                    hashable >= 1.1 && < 2,
                    mtl >= 2 && < 3,
-                   network == 2.4.*,
+                   network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
-                   network-transport == 0.3.*,
-                   network-transport-tcp == 0.3.*,
+                   network-transport == 0.4.*,
+                   network-transport-tcp == 0.4.*,
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
-                   unix >= 2.6 && < 2.7,
+                   unix >= 2.6 && < 2.8,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
@@ -130,21 +132,21 @@ Executable dist
 Executable fib
   main-is:         Test/HdpH/fib.hs
   build-depends:   template-haskell,
-                   array >= 0.4 && < 0.5,
+                   array >= 0.4 && < 0.6,
                    base >= 4 && < 5,
-                   cereal >= 0.3.3 && < 0.4,
+                   cereal == 0.4.*,
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
                    hashable >= 1.1 && < 2,
                    mtl >= 2 && < 3,
-                   network == 2.4.*,
+                   network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
-                   network-transport == 0.3.*,
-                   network-transport-tcp == 0.3.*,
+                   network-transport == 0.4.*,
+                   network-transport-tcp == 0.4.*,
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
-                   unix >= 2.6 && < 2.7,
+                   unix >= 2.6 && < 2.8,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
@@ -158,21 +160,21 @@ Executable fib
 Executable sumeuler
   main-is:         Test/HdpH/sumeuler.hs
   build-depends:   template-haskell,
-                   array >= 0.4 && < 0.5,
+                   array >= 0.4 && < 0.6,
                    base >= 4 && < 5,
-                   cereal >= 0.3.3 && < 0.4,
+                   cereal == 0.4.*,
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
                    hashable >= 1.1 && < 2,
                    mtl >= 2 && < 3,
-                   network == 2.4.*,
+                   network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
-                   network-transport == 0.3.*,
-                   network-transport-tcp == 0.3.*,
+                   network-transport == 0.4.*,
+                   network-transport-tcp == 0.4.*,
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
-                   unix >= 2.6 && < 2.7,
+                   unix >= 2.6 && < 2.8,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
@@ -186,21 +188,21 @@ Executable sumeuler
 Executable sumeuler-2level
   main-is:         Test/HdpH/sumeuler-2level.hs
   build-depends:   template-haskell,
-                   array >= 0.4 && < 0.5,
+                   array >= 0.4 && < 0.6,
                    base >= 4 && < 5,
-                   cereal >= 0.3.3 && < 0.4,
+                   cereal == 0.4.*,
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
                    hashable >= 1.1 && < 2,
                    mtl >= 2 && < 3,
-                   network == 2.4.*,
+                   network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
-                   network-transport == 0.3.*,
-                   network-transport-tcp == 0.3.*,
+                   network-transport == 0.4.*,
+                   network-transport-tcp == 0.4.*,
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
-                   unix >= 2.6 && < 2.7,
+                   unix >= 2.6 && < 2.8,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
@@ -214,21 +216,21 @@ Executable sumeuler-2level
 Executable queens
   main-is:         Test/HdpH/queens.hs
   build-depends:   template-haskell,
-                   array >= 0.4 && < 0.5,
+                   array >= 0.4 && < 0.6,
                    base >= 4 && < 5,
-                   cereal >= 0.3.3 && < 0.4,
+                   cereal == 0.4.*,
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
                    hashable >= 1.1 && < 2,
                    mtl >= 2 && < 3,
-                   network == 2.4.*,
+                   network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
-                   network-transport == 0.3.*,
-                   network-transport-tcp == 0.3.*,
+                   network-transport == 0.4.*,
+                   network-transport-tcp == 0.4.*,
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
-                   unix >= 2.6 && < 2.7,
+                   unix >= 2.6 && < 2.8,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
@@ -242,21 +244,21 @@ Executable queens
 Executable nbody
   main-is:         Test/HdpH/nbody.hs
   build-depends:   template-haskell,
-                   array >= 0.4 && < 0.5,
+                   array >= 0.4 && < 0.6,
                    base >= 4 && < 5,
-                   cereal >= 0.3.3 && < 0.4,
+                   cereal == 0.4.*,
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
                    hashable >= 1.1 && < 2,
                    mtl >= 2 && < 3,
-                   network == 2.4.*,
+                   network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
-                   network-transport == 0.3.*,
-                   network-transport-tcp == 0.3.*,
+                   network-transport == 0.4.*,
+                   network-transport-tcp == 0.4.*,
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
-                   unix >= 2.6 && < 2.7,
+                   unix >= 2.6 && < 2.8,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
