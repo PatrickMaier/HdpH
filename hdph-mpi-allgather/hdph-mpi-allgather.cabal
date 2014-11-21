@@ -1,5 +1,5 @@
 name:          hdph-mpi-allgather
-version:       0.0.2
+version:       0.0.3
 synopsis:      MPI Allgather for Haskell Distributed Parallel Haskell
 description:   MPI-based Allgather for startup phase of HdpH runtime.
                This package exports Haskell bindings to Allgather operations;
@@ -11,7 +11,7 @@ author:        Patrick Maier <C.Patrick.Maier@gmail.com>
 maintainer:    Patrick Maier <C.Patrick.Maier@gmail.com>
 stability:     experimental
 category:      Control, Distributed Computing
-tested-with:   GHC == 7.6.3
+tested-with:   GHC == 7.6.3 || == 7.8.2
 build-type:    Simple
 cabal-version: >= 1.8
 
@@ -25,13 +25,8 @@ Flag LibOpenMPI
   default:         False
   manual:          True
 
-Flag LibMPICH2
+Flag LibMPICH
   description:     Link with MPICH2 library; excludes other Lib* flags.
-  default:         False
-  manual:          True
-
-Flag LibMPICHCray
-  description:     Link with Cray's own MPICH lib; excludes other Lib* flags.
   default:         False
   manual:          True
 
@@ -39,8 +34,7 @@ Library
   exposed-modules: Control.Parallel.HdpH.MPI.Allgather
   c-sources:       cbits/mpi_wrapper.c
   if flag(LibOpenMPI)   { extra-libraries: mpi } else {
-  if flag(LibMPICH2)    { extra-libraries: mpich, mpl } else {
-  if flag(LibMPICHCray) { extra-libraries: mpich_cray } } }
+  if flag(LibMPICH)     { extra-libraries: mpich, mpl } }
   build-depends:   base >= 4 && < 5,
                    bytestring == 0.10.*
   hs-source-dirs:  src
@@ -51,15 +45,14 @@ Executable TestAllgather
   main-is:         TestAllgather.hs
   c-sources:       cbits/mpi_wrapper.c
   if flag(LibOpenMPI)   { extra-libraries: mpi } else {
-  if flag(LibMPICH2)    { extra-libraries: mpich, mpl } else {
-  if flag(LibMPICHCray) { extra-libraries: mpich_cray } } }
+  if flag(LibMPICH)     { extra-libraries: mpich, mpl } }
   if flag(BuildTest)
     build-depends: base >= 4 && < 5,
                    bytestring == 0.10.*,
-                   cereal >= 0.3.3 && < 0.4,
-                   network == 2.4.*,
+                   cereal == 0.4.*,
+                   network >= 2.4 && < 2.7,
                    random >= 1 && < 2,
-                   unix >= 2.6 && < 2.7
+                   unix >= 2.6 && < 2.8
   else
     buildable: False
   hs-source-dirs:  src, test

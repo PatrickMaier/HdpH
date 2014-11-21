@@ -30,22 +30,19 @@ Here are some sample command lines that I have used successfully to build
 hdph-mpi-allgather.
 
 * On my desktop, with OpenMPI:
-  `cabal-dev install --flags=LibOpenMPI --extra-include-dirs=$HOME/sw/openmpi/include --extra-lib-dirs=$HOME/sw/openmpi/lib`
+  `cabal install --flags=LibOpenMPI --extra-include-dirs=$HOMESW/openmpi/include --extra-lib-dirs=$HOMESW/openmpi/lib`
 
 * On my notebook, with OpenMPI:
-  `cabal-dev install --flags=LibOpenMPI --extra-include-dirs=$HOMESW/openmpi/include --extra-lib-dirs=$HOMESW/openmpi/lib`
+  `cabal install --flags=LibOpenMPI --extra-include-dirs=$HOMESW/openmpi/include --extra-lib-dirs=$HOMESW/openmpi/lib`
 
-* At Heriot-Watt, with MPICH2:
-  `cabal-dev install --flags=LibMPICH2 --extra-include-dirs=$HOME/sw/mpich2/1.4.1p1/$ARCH/include --extra-lib-dirs=$HOME/sw/mpich2/1.4.1p1/$ARCH/lib`
+* At Heriot-Watt, with (a privately installed) MPICH2:
+  `cabal install --flags=LibMPICH --extra-include-dirs=$HOMESW/mpich2/1.4.1p1/$ARCH/include --extra-lib-dirs=$HOMESW/mpich2/1.4.1p1/$ARCH/lib`
 
-* At Glasgow, with MPICH:
-  `cabal-dev install --flags=LibMPICH2 --extra-include-dirs=$HOME/sw/mpich/3.1/$ARCH/include --extra-lib-dirs=$HOME/sw/mpich/3.1/$ARCH/lib`
+* At Heriot-Watt, with (a newer, publicly installed) MPICH:
+  `cabal install --flags=LibMPICH --extra-include-dirs=/usr/include/mpich-$ARCH --extra-lib-dirs=/usr/lib64/mpich/lib`
 
-* On HECToR, with Cray's own MPICH variant:
-
-    module swap PrgEnv-cray PrgEnv-gnu
-    export PATH=~/.cabal/bin:~/sw/ghc/7.6.3/bin:$PATH
-    cabal-dev install --flags=LibMPICHCray --extra-include-dirs=$MPICH_DIR/include --extra-lib-dirs=$MPICH_DIR/lib
+* At Glasgow, with (a privately installed) MPICH:
+  `cabal install --flags=LibMPICH --extra-include-dirs=$HOMESW/mpich/3.1/$ARCH/include --extra-lib-dirs=$HOMESW/mpich/3.1/$ARCH/lib`
 
 
 Using this package
@@ -57,19 +54,23 @@ dynamically, and doesn't reside in a standard directory, the environment
 variable `LD_LIBRARY_PATH` may have to be set accordingly.
 
 Here are some bash command lines that I have used to successfully start
-the test application `TestMPI` on three nodes.
+the test application `TestAllgather` on three nodes; build this application
+by supplying `--flags=BuildTest` to the cabal commands above.
 
 * On my desktop, with OpenMPI:
-  `LD_LIBRARY_PATH=$HOME/sw/openmpi/lib mpiexec -n 3 ./TestMPI`
+  `LD_LIBRARY_PATH=$HOMESW/openmpi/lib mpiexec -n 3 ./TestAllgather`
 
 * On my notebook, with OpenMPI:
-  `LD_LIBRARY_PATH=$HOMESW/openmpi/lib mpiexec -n 3 ./TestMPI`
+  `LD_LIBRARY_PATH=$HOMESW/openmpi/lib mpiexec -n 3 ./TestAllgather`
 
 * At Heriot-Watt, with MPICH2:
-  `LD_LIBRARY_PATH=$HOME/sw/mpich2/1.4.1p1/$ARCH/lib mpiexec -n 3 ./TestMPI`
+  `LD_LIBRARY_PATH=$HOMESW/mpich2/1.4.1p1/$ARCH/lib $HOMESW/mpich/1.4.1.p1/$ARHC/bin/mpiexec -n 3 ./TestAllgather`
 
-* On HECToR, with Cray's own MPICH variant:
-  `aprun -n 3 ./TestMPI`
+* At Heriot-Watt, with MPICH:
+  `LD_LIBRARY_PATH=/usr/lib64/mpich/lib /usr/lib64/mpich/bin/mpiexec -n 3 ./TestAllgather`
+
+* At Glasgow, with MPICH:
+  `LD_LIBRARY_PATH=$HOMESW/mpich/3.1/$ARCH/lib mpiexec -n 3 ./TestAllgather`
 
 
 References
