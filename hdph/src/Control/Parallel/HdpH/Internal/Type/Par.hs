@@ -12,6 +12,8 @@ module Control.Parallel.HdpH.Internal.Type.Par
   ) where
 
 import Prelude
+import Control.Applicative (Applicative, pure, (<*>))
+import Control.Monad (ap)
 
 import Control.Parallel.HdpH.Closure (Closure)
 
@@ -33,6 +35,10 @@ instance Functor (ParM m) where
 instance Monad (ParM m) where
     return a = Par $ \ c -> c $! a
     p >>= k  = Par $ \ c -> unPar p $ \ a -> unPar (k $! a) c
+
+instance Applicative (ParM m) where
+    pure  = return
+    (<*>) = ap
 
 
 -- A thread is a monadic action returning a ThreadCont (telling the scheduler

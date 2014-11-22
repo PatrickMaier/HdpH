@@ -12,10 +12,9 @@ module Main where
 
 import Prelude
 import Control.Exception (evaluate)
-import Control.Monad (when, (<=<))
+import Control.Monad (when)
 import Data.List (stripPrefix)
 import Data.Functor ((<$>))
-import Data.List (transpose)
 import Data.Monoid (mconcat)
 import Data.Time.Clock (NominalDiffTime, diffUTCTime, getCurrentTime)
 import System.Environment (getArgs)
@@ -26,7 +25,6 @@ import Control.Parallel.HdpH
        (RTSConf(..), defaultRTSConf, updateConf,
         Par, runParIO,
         eval, time,
-        IVar, GIVar,
         Closure, unClosure, mkClosure,
         toClosure, ToClosure(locToClosure),
         static, StaticToClosure, staticToClosure,
@@ -36,23 +34,6 @@ import Control.Parallel.HdpH.Dist (Dist, one)
 import Control.Parallel.HdpH.Strategies 
        (parMapMLocal, parMapM2Level, parMapM2LevelRelaxed)
 import qualified Control.Parallel.HdpH.Strategies as Strategies (declareStatic)
-
-
------------------------------------------------------------------------------
--- Static declaration
-
--- orphan ToClosure instances (unavoidably so)
-instance ToClosure Integer where locToClosure = $(here)
-instance ToClosure (Integer,Integer) where locToClosure = $(here)
-
-declareStatic :: StaticDecl
-declareStatic =
-  mconcat
-    [HdpH.declareStatic,         -- declare Static deserialisers
-     Strategies.declareStatic,   -- from imported modules
-     declare (staticToClosure :: StaticToClosure Integer),
-     declare (staticToClosure :: StaticToClosure (Integer,Integer)),
-     declare $(static 'sum_totient_seq)]
 
 
 -----------------------------------------------------------------------------
@@ -126,9 +107,6 @@ cdiv p q | r == 0    = k
          | otherwise = k + 1 where (k, r) = divMod p q
 
 
------------------------------------------------------------------------------
--- initialisation, argument processing and 'main'
-
 type Time = NominalDiffTime
 
 -- time an IO action
@@ -138,6 +116,29 @@ timeIO action = do t0 <- getCurrentTime
                    t1 <- getCurrentTime
                    return (x, diffUTCTime t1 t0)
 
+
+-----------------------------------------------------------------------------
+-- Static declaration (just before 'main')
+
+-- Empty splice; TH hack to make all environment abstractions visible.
+$(return [])
+
+-- orphan ToClosure instances (unavoidably so)
+instance ToClosure Integer where locToClosure = $(here)
+instance ToClosure (Integer,Integer) where locToClosure = $(here)
+
+declareStatic :: StaticDecl
+declareStatic =
+  mconcat
+    [HdpH.declareStatic,         -- declare Static deserialisers
+     Strategies.declareStatic,   -- from imported modules
+     declare (staticToClosure :: StaticToClosure Integer),
+     declare (staticToClosure :: StaticToClosure (Integer,Integer)),
+     declare $(static 'sum_totient_seq)]
+
+
+-----------------------------------------------------------------------------
+-- initialisation, argument processing and 'main'
 
 -- initialize random number generator
 initrand :: Int -> IO ()
@@ -178,10 +179,13 @@ parseArgs (s:ss) =
        Nothing -> go defVers (s:ss)
 
 
-defVers  =     1 :: Int
-defLower =     1 :: Integer
-defUpper = 51200 :: Integer
-defTasks =   512 :: Integer
+defVers :: Int
+defVers  = 1
+
+defLower, defUpper, defTasks :: Integer
+defLower =     1
+defUpper = 51200
+defTasks =   512
 
 
 main :: IO ()

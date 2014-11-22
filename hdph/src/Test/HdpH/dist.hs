@@ -32,27 +32,6 @@ import qualified Control.Parallel.HdpH.Strategies as Strategies (declareStatic)
 
 
 -----------------------------------------------------------------------------
--- Static declaration
-
--- orphan ToClosure instances (unavoidably so)
-instance ToClosure Node where locToClosure = $(here)
-instance ToClosure [Node] where locToClosure = $(here)
-instance ToClosure Dist where locToClosure = $(here)
-instance ToClosure DistGraph where locToClosure = $(here)
-
-declareStatic :: StaticDecl
-declareStatic = mconcat
-  [HdpH.declareStatic,
-   Strategies.declareStatic,
-   declare (staticToClosure :: StaticToClosure Node),
-   declare (staticToClosure :: StaticToClosure [Node]),
-   declare (staticToClosure :: StaticToClosure Dist),
-   declare (staticToClosure :: StaticToClosure DistGraph),
-   declare $(static 'const_myDistGraph),
-   declare $(static 'gatherNodes)]
-
-
------------------------------------------------------------------------------
 -- computing and comparing the graph of distance metric on all nodes
 
 type DistGraph = [(Node, Node, Dist)]
@@ -108,6 +87,28 @@ checkGatheredNodes = do
   let n = length nodess
   let match = all (nodes ==) nodess
   io $ putStrLn $ "all " ++ show n ++ " node lists match: " ++ show match
+
+
+-----------------------------------------------------------------------------
+-- Static declaration (just before 'main')
+
+-- Empty splice; TH hack to make all environment abstractions visible.
+$(return [])
+
+-- orphan ToClosure instances (unavoidably so)
+instance ToClosure Node where locToClosure = $(here)
+instance ToClosure Dist where locToClosure = $(here)
+instance ToClosure DistGraph where locToClosure = $(here)
+
+declareStatic :: StaticDecl
+declareStatic = mconcat
+  [HdpH.declareStatic,
+   Strategies.declareStatic,
+   declare (staticToClosure :: StaticToClosure Node),
+   declare (staticToClosure :: StaticToClosure Dist),
+   declare (staticToClosure :: StaticToClosure DistGraph),
+   declare $(static 'const_myDistGraph),
+   declare $(static 'gatherNodes)]
 
 
 -----------------------------------------------------------------------------

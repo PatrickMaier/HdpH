@@ -1,8 +1,8 @@
-## INSTALLING hdph-mpi-allgather-0.0.1 on NB305
+## INSTALLING hdph-mpi-allgather on NB305
 ##
-## Requires: cabal-dev, ghc-7.6.3, mpiexec on $PATH
+## Requires: cabal, ghc, mpiexec on $PATH
 ##
 
-cabal-dev install --flags=LibOpenMPI --flags=BuildTest --extra-include-dirs=/usr/local/pmaier/sw/openmpi/include --extra-lib-dirs=/usr/local/pmaier/sw/openmpi/lib
-
-LD_LIBRARY_PATH=/usr/local/pmaier/sw/openmpi/lib mpiexec -n 100 dist/build/TestAllgather/TestAllgather
+cabal sandbox init
+cabal install hdph-mpi-allgather-*.tar.gz --flags=BuildTest --flags=LibOpenMPI --extra-include-dirs=$HOMESW/openmpi/include --extra-lib-dirs=$HOMESW/openmpi/lib
+LD_LIBRARY_PATH=$HOMESW/openmpi/lib mpiexec -n 100 .cabal-sandbox/bin/TestAllgather
