@@ -21,7 +21,7 @@ import System.Environment (getArgs)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 import System.Random (mkStdGen, setStdGen)
 
-import Control.Parallel.HdpH 
+import Control.Parallel.HdpH
        (RTSConf(..), defaultRTSConf, updateConf,
         Par, runParIO,
         eval, time,
@@ -31,7 +31,7 @@ import Control.Parallel.HdpH
         StaticDecl, declare, register, here)
 import qualified Control.Parallel.HdpH as HdpH (declareStatic)
 import Control.Parallel.HdpH.Dist (Dist, one)
-import Control.Parallel.HdpH.Strategies 
+import Control.Parallel.HdpH.Strategies
        (parMapMLocal, parMapM2Level, parMapM2LevelRelaxed)
 import qualified Control.Parallel.HdpH.Strategies as Strategies (declareStatic)
 
@@ -161,7 +161,7 @@ parseOpts args = do
         Nothing -> return (conf, 0,      arg':args')
 
 
--- parse (optional) arguments in this order: 
+-- parse (optional) arguments in this order:
 -- * version to run
 -- * lower bound for Euler's totient function
 -- * upper bound for Euler's totient function
@@ -197,41 +197,33 @@ main = do
   (conf, seed, args) <- parseOpts opts_args
   let (version, lower, upper, gran_arg) = parseArgs args
   initrand seed
+  -- Output using one tag per line to make it easy for grep and HdpHBencher.
   case version of
-      0 -> do (x, t) <- timeIO $ evaluate
-                          (sum_totient lower upper)
-              putStrLn $
-                "{v0} sum $ map totient [" ++ show lower ++ ".." ++
-                show upper ++ "] = " ++ show x ++
-                " {runtime=" ++ show t ++ "}"
+      0 -> do (x, t) <- timeIO $ evaluate (sum_totient lower upper)
+              outputResults ["v0",show lower,show upper,show gran_arg,show x,"0",show t]
       1 -> do (output,t0) <- timeIO $ evaluate =<< runParIO conf
                                (sum_totient_1level lower upper gran_arg)
               case output of
-                Just (x,t) -> putStrLn $
-                                "{v1, tasks=" ++ show gran_arg ++ "} " ++
-                                "sum $ map totient [" ++ show lower ++ ".." ++
-                                show upper ++ "] = " ++ show x ++
-                                " {overhead=" ++ show (t0 - t) ++
-                                ", runtime=" ++ show t ++ "}"
+                Just (x,t) ->
+                  outputResults ["v0",show lower,show upper,show gran_arg,show x,show (t0 - t),show t]
                 Nothing    -> return ()
       2 -> do (output,t0) <- timeIO $ evaluate =<< runParIO conf
                                (sum_totient_2level lower upper gran_arg)
               case output of
-                Just (x,t) -> putStrLn $
-                                "{v2, tasks=" ++ show gran_arg ++ "} " ++
-                                "sum $ map totient [" ++ show lower ++ ".." ++
-                                show upper ++ "] = " ++ show x ++
-                                " {overhead=" ++ show (t0 - t) ++
-                                ", runtime=" ++ show t ++ "}"
+                Just (x,t) ->
+                  outputResults ["v2",show lower,show upper,show gran_arg,show x,show (t0 - t),show t]
                 Nothing    -> return ()
       3 -> do (output,t0) <- timeIO $ evaluate =<< runParIO conf
                                (sum_totient_2level_relax lower upper gran_arg)
               case output of
-                Just (x,t) -> putStrLn $
-                                "{v3, tasks=" ++ show gran_arg ++ "} " ++
-                                "sum $ map totient [" ++ show lower ++ ".." ++
-                                show upper ++ "] = " ++ show x ++
-                                " {overhead=" ++ show (t0 - t) ++
-                                ", runtime=" ++ show t ++ "}"
+                Just (x,t) ->
+                  outputResults ["v3",show lower,show upper,show gran_arg,show x,show (t0 - t),show t]
                 Nothing    -> return ()
       _ -> return ()
+
+outputResults :: [String] -> IO ()
+outputResults [version, boundl, boundu, gran, output, overhead, runtime] =
+  mapM_ printTags $ zip tags [version,boundl,boundu,gran,output,overhead,runtime]
+    where tags = ["Version:","LowerBound:","UpperBound:","TaskSize:","Result:","Overhead:","Runtime:"]
+          printTags (a,b) = putStrLn (a ++ b)
+outputResults _ = putStrLn "Not enough arguments to output results"
