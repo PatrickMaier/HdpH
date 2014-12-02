@@ -224,6 +224,6 @@ main = do
 outputResults :: [String] -> IO ()
 outputResults [version, boundl, boundu, gran, output, overhead, runtime] =
   mapM_ printTags $ zip tags [version,boundl,boundu,gran,output,overhead,runtime]
-    where tags = ["Version:","LowerBound:","UpperBound:","TaskSize:","Result:","Overhead:","Runtime:"]
+    where tags = ["Version: ","LowerBound: ","UpperBound: ","TaskSize: ","Result: ","Overhead: ","Runtime: "]
           printTags (a,b) = putStrLn (a ++ b)
 outputResults _ = putStrLn "Not enough arguments to output results"
