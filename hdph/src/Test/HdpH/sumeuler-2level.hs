@@ -205,7 +205,7 @@ main = do
                                (sum_totient_1level lower upper gran_arg)
               case output of
                 Just (x,t) ->
-                  outputResults ["v0",show lower,show upper,show gran_arg,show x,show (t0 - t),show t]
+                  outputResults ["v1",show lower,show upper,show gran_arg,show x,show (t0 - t),show t]
                 Nothing    -> return ()
       2 -> do (output,t0) <- timeIO $ evaluate =<< runParIO conf
                                (sum_totient_2level lower upper gran_arg)
