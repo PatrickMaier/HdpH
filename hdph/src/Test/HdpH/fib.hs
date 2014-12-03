@@ -221,45 +221,33 @@ main = do
   case version of
       0 -> do (x, t) <- timeIO $ evaluate
                           (fib n)
-              putStrLn $
-                "{v0} fib " ++ show n ++ " = " ++ show x ++
-                " {runtime=" ++ show t ++ "}"
+              outputResults $ ["v0","0","0", show n, show x, show t]
       1 -> do (output, t) <- timeIO $ evaluate =<< runParIO conf
                                (par_fib seqThreshold n)
               case output of
-                Just x  -> putStrLn $
-                             "{v1, " ++ 
-                             "seqThreshold=" ++ show seqThreshold ++ "} " ++
-                             "fib " ++ show n ++ " = " ++ show x ++
-                             " {runtime=" ++ show t ++ "}"
+                Just x  -> outputResults $ ["v1",show seqThreshold, "0", show n, show x, show t]
                 Nothing -> return ()
       2 -> do (output, t) <- timeIO $ evaluate =<< runParIO conf
                                (dist_fib seqThreshold parThreshold n)
               case output of
-                Just x  -> putStrLn $
-                             "{v2, " ++
-                             "seqThreshold=" ++ show seqThreshold ++ ", " ++
-                             "parThreshold=" ++ show parThreshold ++ "} " ++
-                             "fib " ++ show n ++ " = " ++ show x ++
-                             " {runtime=" ++ show t ++ "}"
+                Just x  -> outputResults $ ["v2",show seqThreshold, show parThreshold, show n, show x, show t]
                 Nothing -> return ()
       3 -> do (output, t) <- timeIO $ evaluate =<< runParIO conf
                                (spark_skel_fib seqThreshold n)
               case output of
-                Just x  -> putStrLn $
-                             "{v3, " ++
-                             "seqThreshold=" ++ show seqThreshold ++ "} " ++
-                             "fib " ++ show n ++ " = " ++ show x ++
-                             " {runtime=" ++ show t ++ "}"
+                Just x  -> outputResults $ ["v3",show seqThreshold, "0", show n, show x, show t]
                 Nothing -> return ()
       4 -> do (output, t) <- timeIO $ evaluate =<< runParIO conf
                                (allNodes >>= \ nodes ->
                                 push_skel_fib nodes seqThreshold n)
               case output of
-                Just x  -> putStrLn $
-                             "{v4, " ++
-                             "seqThreshold=" ++ show seqThreshold ++ "} " ++
-                             "fib " ++ show n ++ " = " ++ show x ++
-                             " {runtime=" ++ show t ++ "}"
+                Just x  -> outputResults $ ["v4",show seqThreshold, "0", show n, show x, show t]
                 Nothing -> return ()
       _ -> return ()
+
+outputResults :: [String] -> IO ()
+outputResults [version, seqT, parT, input, output, runtime] =
+  mapM_ printTags $ zip tags [version, seqT, parT, input, output, runtime]
+    where tags = ["Version: ","SequentialThreshold: ", "ParallelThreshold: ", "Input: ","Output: ","Runtime: "]
+          printTags (a,b) = putStrLn (a ++ b)
+outputResults _ = putStrLn "Not enough arguments to output results"
