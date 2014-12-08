@@ -248,6 +248,6 @@ main = do
 outputResults :: [String] -> IO ()
 outputResults [version, seqT, parT, input, output, runtime] =
   mapM_ printTags $ zip tags [version, seqT, parT, input, output, runtime]
-    where tags = ["Version: ","SequentialThreshold: ", "ParallelThreshold: ", "Input: ","Output: ","Runtime: "]
+    where tags = ["VERSION: ","SEQUENTIALTHRESHOLD: ", "PARALLELTHRESHOLD: ", "INPUT: ","OUTPUT: ","RUNTIME: "]
           printTags (a,b) = putStrLn (a ++ b)
 outputResults _ = putStrLn "Not enough arguments to output results"
