@@ -7,14 +7,14 @@ implemented entirely in Haskell but does make use of a few GHC
 extensions, most notably TemplateHaskell.
 
 A recent paper [1] presents the semantics of *HdpH* and evaluates its
-implementation. There is also an earlier design paper [2]. Sources for
-the related reliable *HdpH-RS* DSL can also be found on GitHub [3].
+implementation. There are also earlier design papers [2,3]. Sources for
+the related reliable *HdpH-RS* DSL can also be found on GitHub [4].
 
 
 Repository structure
 --------------------
 
-This repository follows the branching model of [4]. The `master`
+This repository follows the branching model of [5]. The `master`
 branch contains an archive directory `releases` with released cabal
 packages; the `develop` branch holds the current development version;
 other branches are not meant to be public.
@@ -47,6 +47,14 @@ HdpH is not production software; use at your own risk (see `LICENSE`).
 Documentation may be out of date.
 
 
+Related Projects
+----------------
+
+* [Cloud Haskell](http://haskell-distributed.github.io)
+
+* [Par Monad and Friends](https://github.com/simonmar/monad-par)
+
+
 References
 ----------
 
@@ -59,7 +67,13 @@ References
     [Reliable Scalable Symbolic Computation: The Design of SymGridPar2](http://www.dcs.gla.ac.uk/~pmaier/papers/Maier_Stewart_Trinder_SAC2013.pdf).
     Proc. 28th ACM Symposium On Applied Computing (SAC 2013), pp. 1677-1684.
 
-3.  [HdpH-RS development repository](https://github.com/robstewart57/hdph-rs)
+3.  Patrick Maier, Phil Trinder.
+    [Implementing a High-level Distributed-Memory Parallel Haskell in Haskell](http://www.macs.hw.ac.uk/~pm175/papers/Maier_Trinder_IFL2011_XT.pdf).
+    Proc. 23rd Intl. Symposium on the Implementation and Application of
+    Functional Languages (IFL 2011), pp. 35-50.
 
-4.  Vincent Driessen.
+4.  Rob Stewart.
+    [HdpH-RS development repository](https://github.com/robstewart57/hdph-rs)
+
+5.  Vincent Driessen.
     [A successful Git branching model](http://nvie.com/posts/a-successful-git-branching-model/)
