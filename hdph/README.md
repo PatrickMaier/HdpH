@@ -3,13 +3,8 @@ Haskell Distributed Parallel Haskell
 
 **Haskell distributed parallel Haskell (HdpH)** is a Haskell DSL for
 parallel computation on distributed-memory architectures. HdpH is
-implemented entirely in Haskell but does make use of a few GHC extensions,
+implemented entirely in Haskell but does make use of GHC extensions,
 most notably TemplateHaskell.
-
-HdpH is described in some detail in the paper [Implementing a High-level Distributed-Memory Parallel Haskell in Haskell](http://www.macs.hw.ac.uk/~pm175/papers/Maier_Trinder_IFL2011_XT.pdf).
-The paper on [The Design of SymGridPar2](http://www.macs.hw.ac.uk/~pm175/papers/Maier_Stewart_Trinder_SAC2013.pdf) paints the bigger picture of what HdpH was designed for and where future developments will lead.
-
-This release is considered alpha stage.
 
 
 Building HdpH with UDP node discovery
@@ -25,7 +20,7 @@ Building HdpH with MPI node discovery
 
 Requires `hdph-closure` and `hdph-mpi-allgather`. Installation instructions
 for the latter depend on the MPI library against which it is linked, see
-README of package `hdph-mpi-allgather`.
+`README` of package `hdph-mpi-allgather`.
 
 Once the dependencies have been installed, install `hdph` by passing
 `--flags=WithMPI` to the cabal installer.
@@ -81,7 +76,7 @@ The expected output should look somewhat like this:
 
 #### Note about MPI libraries
 
-If using MPI node discovery please make sure that `mpiexec` actually find
+If using MPI node discovery please make sure that `mpiexec` actually finds
 the MPI libraries used to build package `hdph-mpi-allgather`, as mentioned
 in the README to `hdph-mpi-allgather`.
 
@@ -181,7 +176,7 @@ indeed run 4 schedulers because its `max_THREAD` list was length 5, and
 the length of the `max_THREAD` list is always 1 plus the number of schedulers.
 
 
-### Launch caveats
+### Launch caveats when using UDP node discovery
 
 At startup HdpH nodes open random ports and rely on UDP multicasts to discover
 each other. This results in a number of limitations:
@@ -199,25 +194,3 @@ each other. This results in a number of limitations:
 
 Any deviation from the above limitations is likely to cause HdpH to hang
 forever.
-
-
-Related Projects
-----------------
-
-* [Cloud Haskell](http://haskell-distributed.github.com)
-
-* [Par Monad and Friends](https://github.com/simonmar/monad-par)
-
-
-References
-----------
-
-1.  Patrick Maier, Phil Trinder.
-    [Implementing a High-level Distributed-Memory Parallel Haskell in Haskell](http://www.macs.hw.ac.uk/~pm175/papers/Maier_Trinder_IFL2011_XT.pdf).
-    Proc. 2011 Symposium on Implementation and Application of Functional Languages (IFL 2011), Springer LNCS 7257, pp. 35-50.
-
-2.  Patrick Maier, Rob Stewart, Phil Trinder.
-    [Reliable Scalable Symbolic Computation: The Design of SymGridPar2](http://www.macs.hw.ac.uk/~pm175/papers/Maier_Stewart_Trinder_SAC2013.pdf).
-    Proc. 28th ACM Symposium On Applied Computing (SAC 2013), pp. 1677-1684.
-
-3.  [HdpH development repository](https://github.com/PatrickMaier/HdpH) on github.
