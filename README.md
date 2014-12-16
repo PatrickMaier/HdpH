@@ -3,8 +3,8 @@ HdpH (Haskell distributed parallel Haskell) GitHub repository
 
 **Haskell distributed parallel Haskell (HdpH)** is a Haskell DSL for
 parallel computation on distributed-memory architectures. HdpH is
-implemented entirely in Haskell but does make use of a few GHC
-extensions, most notably TemplateHaskell.
+implemented entirely in Haskell but does make use of GHC extensions,
+most notably TemplateHaskell.
 
 A recent paper [1] presents the semantics of *HdpH* and evaluates its
 implementation. There are also earlier design papers [2,3]. Sources for
@@ -23,8 +23,8 @@ Package `hdph` is the main HdpH source.  It relies on auxiliary
 packages `hdph-closure` and `hdph-mpi-allgather`, where the latter is
 only required when using MPI node discovery instead of UDP.
 
-Consult `releases/HISTORY.txt` for information about package and
-compiler dependencies.
+Consult `HISTORY.txt` for information about package and compiler
+dependencies.
 
 
 Building HdpH
