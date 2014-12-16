@@ -14,13 +14,37 @@ the related reliable *HdpH-RS* DSL can also be found on GitHub [4].
 Repository structure
 --------------------
 
-This repository follows the branching model of [5]. The `master`
-branch contains an archive directory `releases` with released cabal
-packages; the `develop` branch holds the current development version;
-other branches are not meant to be public.
+This repository largely follows the git branching model of [5].
+
+* The `master` branch publishes releases. Its HEAD is always the
+  latest release, and it contains a directory `releases` with archived
+  cabal packages.
+
+* The `develop` branch tracks development integration. Its HEAD is the
+  latest development version.
+
+* Branches named `feature-foo` (where `foo` is a descriptive string)
+  are for the development or fixing of feature `foo`. They branch off
+  `develop` and are eventually merged back into `develop` (or
+  abandoned).
+
+* Branches named `test-bar` (where `bar` is a descriptive string)
+  are for testing wacky ideas. They branch off `develop` but are not
+  meant to be merged back.
+
+* Branches named `release-a.b.c` (where `a.b.c` is a version number)
+  prepare for releases. They branch off `develop` and are merged back
+  into `master` and `develop`.
+
+* Branches named `hotfix-a.b.c.d` (`a.b.c.d` is a version number)
+  prepare for off-cycle fixes of released code. They branch off `master`
+  (version `a.b.c`) and are merged back `master` and `develop`.
+
+* Only branches `master` and `develop` are considered public.
+
 
 Package `hdph` is the main HdpH source.  It relies on auxiliary
-packages `hdph-closure` and `hdph-mpi-allgather`, where the latter is
+packages `hdph-closure` and `hdph-mpi-allgather`; the latter is
 only required when using MPI node discovery instead of UDP.
 
 Consult `HISTORY.txt` for information about package and compiler
@@ -33,10 +57,10 @@ Building HdpH
 Detailed build instructions can be found in `hdph/README.md` and
 `hdph/doc/INSTALL.txt`.
 
-Building auxiliary package `hdph-closure` is straightforward but
-building `hdph-mpi-allgather` requires furnishing `cabal-install` with
-the paths to MPI libraries and includes; see
-`hdph-mpi-allgather/README.md` for examples. The package has been
+Building the auxiliary package `hdph-closure` is straightforward.
+Building package `hdph-mpi-allgather` requires furnishing the cabal
+installer with the paths to MPI libraries and includes, see
+`hdph-mpi-allgather/README.md` for examples; the package has been
 built successfully with recent OpenMPI and MPICH libraries.
 
 
@@ -59,7 +83,7 @@ References
 ----------
 
 1.  Patrick Maier, Rob Stewart, Phil Trinder.
-    The HdpH DSLs for Scalable Reliable Computation.
+    [The HdpH DSLs for Scalable Reliable Computation](http://www.dcs.gla.ac.uk/~pmaier/#pubs).
     Proc. 2014 ACM SIGPLAN Symposium on Haskell (Haskell 2014), pp 65-76.
     DOI 10.1145/2633357.2633363
 
