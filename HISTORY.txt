@@ -18,3 +18,13 @@ Date:     6 Sep 2014
 Packages: hdph-0.2.2, hdph-closure-0.2.0, hdph-mpi-allgather-0.0.2
 Compiler: GHC 7.6
 Notes:    Release to go with the Haskell 2014 paper.
+
+
+HdpH 0.0.1
+----------
+
+Date:     7 Feb 2013
+Packages: hdph-0.0.1, hdph-closure-0.0.1
+Compiler: GHC 7.6 or GHC 7.4
+Notes:    Historic release (on hackage);
+          supports UDP node discovery only.
