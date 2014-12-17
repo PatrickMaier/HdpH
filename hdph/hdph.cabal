@@ -61,6 +61,7 @@ Library
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall
@@ -91,6 +92,7 @@ Executable hello
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
@@ -119,6 +121,7 @@ Executable dist
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
@@ -147,6 +150,7 @@ Executable fib
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
@@ -175,6 +179,7 @@ Executable sumeuler
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
@@ -203,6 +208,7 @@ Executable sumeuler-2level
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
@@ -231,6 +237,7 @@ Executable queens
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
@@ -259,6 +266,7 @@ Executable nbody
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
