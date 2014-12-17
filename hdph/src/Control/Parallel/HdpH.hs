@@ -70,6 +70,7 @@ import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.DeepSeq (NFData, deepseq)
 import Control.Monad (when, void, forM)
 import Data.Functor ((<$>))
+import Data.Hashable (Hashable)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Monoid (mconcat)
 import Data.Serialize (Serialize)
@@ -133,10 +134,10 @@ import Control.Parallel.HdpH.Internal.Type.Par
 -- abstract locations and distance metric
 
 -- | A 'Node' identifies a node (that is, an OS process running HdpH).
--- A 'Node' should be thought of as an abstract identifier which
--- instantiates the classes 'Eq', 'Ord', 'Show', 'NFData' and 'Serialize'.
+-- A 'Node' should be thought of as an abstract identifier which instantiates
+-- the classes 'Eq', 'Ord', 'Hashable', 'Show', 'NFData' and 'Serialize'.
 newtype Node = Node Location.Node
-                 deriving (Eq, Ord, NFData, Serialize)
+                 deriving (Eq, Ord, Hashable, NFData, Serialize)
 
 -- Show instance (mainly for debugging)
 instance Show Node where
