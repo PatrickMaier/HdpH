@@ -11,6 +11,8 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
+{-# OPTIONS_GHC -fno-warn-orphans #-}
+
 module Control.Parallel.HdpH.Internal.Comm
   ( -- * initialise comms layer
     withCommDo,    -- :: RTSConf -> IO () -> IO ()
@@ -50,7 +52,7 @@ import qualified Network.Transport.TCP as TCP
 import Control.Parallel.HdpH.Conf (RTSConf(..))
 import Control.Parallel.HdpH.Dist (zero)
 import Control.Parallel.HdpH.Internal.Location 
-       (Node, address, mkNode, dbgNone)
+       (Node, address, mkNode, debug, dbgNone, dbgFailure)
 import Control.Parallel.HdpH.Internal.State.Location
        (myNodeRef, allNodesRef, debugRef)
 import qualified Control.Parallel.HdpH.Internal.Data.DistMap as DistMap
@@ -154,8 +156,8 @@ connections :: IO ConnCache
 connections = s_connCache <$> readIORef stateRef
 
 -- Debug level; defined-not-used, maybe useful in future
-debug :: IO Int
-debug = debugLvl <$> conf
+debugLevel :: IO Int
+debugLevel = debugLvl <$> conf
 
 
 -----------------------------------------------------------------------------
@@ -164,8 +166,8 @@ debug = debugLvl <$> conf
 withCommDo :: RTSConf -> IO () -> IO ()
 withCommDo conf0 action = do
   -- check debug level
-  let debugLevel = debugLvl conf0
-  unless (debugLevel >= dbgNone) $
+  let debug_level = debugLvl conf0
+  unless (debug_level >= dbgNone) $
     error $ thisModule ++ ".withCommDo: debug level < none"
 
   -- create a transport
@@ -280,7 +282,8 @@ decodeNode bs =
     Left e     -> error $ thisModule ++ ".decodeNode: " ++ show e
 
 
--- Instantiate CacheMappable class to make connection cache work.
+-- Instantiate CacheMappable class to make connection cache work;
+-- orphan instance
 instance CacheMappable Node NT.Connection where
 
   -- Create a new (heavyweight) connection to the given node.
@@ -288,8 +291,10 @@ instance CacheMappable Node NT.Connection where
     ep <- myEP
     c <- NT.connect ep (address node) NT.ReliableOrdered NT.defaultConnectHints
     case c of
-      Left _     -> create node  -- keep re-trying
       Right conn -> return conn
+      Left _     -> do debug dbgFailure $
+                         thisModule ++ ".create: error to " ++ show node
+                       create node  -- connect error: keep re-trying
 
   -- Close the given connection.
   destroy _ conn = NT.close conn
@@ -305,14 +310,15 @@ receive = msgQ >>= readChan
 
 
 -- | Send a payload message; errors are currently ignored.
---   TODO: output error messages in DEBUG mode.
 send :: Node -> Payload -> IO ()
 send dest message = do
   conn <- connections >>= (! dest)  -- lookup connection; create if non-existent
   ok <- NT.send conn $ LBS.toChunks message
   case ok of
-    Left _   -> return ()  -- ignore send errors
     Right () -> return ()
+    Left _   -> do debug dbgFailure $
+                     thisModule ++ ".send: error to " ++ show dest
+                   send dest message  -- send error: keep re-trying
 
 
 -----------------------------------------------------------------------------
@@ -337,6 +343,8 @@ recv ep = do
   case event of
     NT.Received _ msg -> return $!! LBS.fromChunks msg  -- Q: ($!!) or ($!)?
     NT.ErrorEvent (NT.TransportError (NT.EventConnectionLost addr) _) -> do
+      debug dbgFailure $
+        thisModule ++ ".recv: connection lost"
       root <- rootNode  -- DODGY: May fail if root has not yet been initialised.
       if addr == address root
         then do
@@ -346,4 +354,6 @@ recv ep = do
           -- Ignore other error events.
           recv ep
     _ -> do -- ignore other events
+      debug dbgFailure $
+        thisModule ++ ".recv: encountered event " ++ show event
       recv ep
