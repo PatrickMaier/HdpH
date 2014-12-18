@@ -19,10 +19,10 @@ module Control.Parallel.HdpH.Internal.Data.CacheMap.Strict
   , getSize
   , resize
   , flush
-  , (!)
+  , lookup
   ) where
 
-import Prelude
+import Prelude hiding (lookup)
 import Control.Monad (when)
 import Data.Functor ((<$>))
 import Data.IORef (IORef, newIORef, readIORef, atomicModifyIORef')
@@ -35,8 +35,8 @@ import System.Random (randomRIO)
 
 -- | Key/value pairs that can be stored in a CacheMap
 class (Eq k, Hashable k) => CacheMappable k v where
-  -- | Create a value from the key (upon cache miss).
-  create  :: k -> IO v
+  -- | Create a value from the key (upon cache miss); creation may fail.
+  create  :: k -> IO (Maybe v)
 
   -- | Finalize a key/value pair (upon cache eviction).
   destroy :: k -> v -> IO ()
@@ -100,28 +100,31 @@ flush (CacheMap cmRef) = do
 
 -- | CacheMap lookup, with automatic insertion of missing entries
 --   and random eviction if there are too many entries.
-(!) :: (CacheMappable k v) => CacheMap k v -> k -> IO v
-CacheMap cmRef ! key = do
+--   Lookup may fail upon cache miss and creation failure.
+lookup :: (CacheMappable k v) => k -> CacheMap k v -> IO (Maybe v)
+lookup key (CacheMap cmRef) = do
   CM cacheSize hm <- readIORef cmRef
   case HashMap.lookup key hm of
-    Just val -> return val  -- fast path: cache hit
-    Nothing  -> do          -- slow path: cache miss
+    Just val -> return $ Just val  -- fast path: cache hit
+    Nothing  -> do                 -- slow path: cache miss
       -- create value to be cached
-      val <- create key
-      -- skip cache update if cache size is set to 0.
-      when (cacheSize /= 0) $ do
-        -- get random eviction slot (unless cacheSize is negative)
-        rnd <- if cacheSize < 0
-                 then return (-1)
-                 else randomRIO (0, cacheSize - 1)
-        -- update cache
-        evicted <- atomicModifyIORef' cmRef $ evictAndInsert rnd key val
-        -- finalize evicted key/value pair (if there is one)
-        case evicted of
-          Nothing     -> return ()
-          Just (k, v) -> destroy k v
-      -- return value
-      return val
+      maybe_val <- create key
+      -- skip cache update if there is no value or cache size is set to 0.
+      case maybe_val of
+        Nothing  -> return ()
+        Just val -> when (cacheSize /= 0) $ do
+          -- get random eviction slot (unless cacheSize is negative)
+          rnd <- if cacheSize < 0
+                   then return (-1)
+                   else randomRIO (0, cacheSize - 1)
+          -- update cache
+          evicted <- atomicModifyIORef' cmRef $ evictAndInsert rnd key val
+          -- finalize evicted key/value pair (if there is one)
+          case evicted of
+            Nothing     -> return ()
+            Just (k, v) -> destroy k v
+      -- return result of create
+      return maybe_val
 
 
 -- Insert a key/value pair, evicting the rnd-th pair if the map is full;
