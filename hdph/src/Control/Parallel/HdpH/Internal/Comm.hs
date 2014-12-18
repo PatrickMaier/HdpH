@@ -9,6 +9,7 @@
 
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module Control.Parallel.HdpH.Internal.Comm
   ( -- * initialise comms layer
@@ -53,8 +54,11 @@ import Control.Parallel.HdpH.Internal.Location
 import Control.Parallel.HdpH.Internal.State.Location
        (myNodeRef, allNodesRef, debugRef)
 import qualified Control.Parallel.HdpH.Internal.Data.DistMap as DistMap
+import Control.Parallel.HdpH.Internal.Data.CacheMap.Strict
+       (CacheMappable, create, destroy, empty, resize, (!))
 import Control.Parallel.HdpH.Internal.Topology (Bases, equiDistMap)
-import Control.Parallel.HdpH.Internal.Type.Comm (State(..), Payload, PayloadQ)
+import Control.Parallel.HdpH.Internal.Type.Comm
+       (State(..), Payload, PayloadQ, ConnCache)
 import Control.Parallel.HdpH.Internal.State.Comm (stateRef)
 #if defined(STARTUP_MPI)
 import Control.Parallel.HdpH.Internal.CommStartupMPI
@@ -145,9 +149,9 @@ transport = s_tp <$> readIORef stateRef
 myEP :: IO NT.EndPoint
 myEP = s_ep <$> readIORef stateRef
 
--- defined-not-used, maybe useful in future
-connections :: IO [NT.Connection]
-connections = s_conns <$> readIORef stateRef
+-- Connection cache
+connections :: IO ConnCache
+connections = s_connCache <$> readIORef stateRef
 
 -- Debug level; defined-not-used, maybe useful in future
 debug :: IO Int
@@ -206,15 +210,16 @@ withCommDo conf0 action = do
     let !n = length all_nodes
     let !bases = equiDistMap all_nodes
 
-    -- create connections from this to all nodes (including itself)
-    conns <- connectToAllNodes all_nodes
+    -- setup connection cache (unbounded size, for now)
+    connCache <- empty
+    resize (-1) connCache
 
---    hPutStrLn stderr ("DEBUG.withCommDo.4: " ++ show me ++ ", length conns=" ++ show (length conns)) >> hFlush stderr
+--    hPutStrLn stderr ("DEBUG.withCommDo.4: " ++ show me) >> hFlush stderr
 
     -- set up fully initialised state
     atomicModifyIORef stateRef $ \ s ->
       (s { s_nodes = n, s_allNodes = all_nodes, s_bases = bases, s_root = root,
-           s_conns = conns }, ())
+           s_connCache = connCache }, ())
 
     -- set current node in Location module
     -- NOTE: HdpH still relies on state in Location module;
@@ -267,27 +272,27 @@ createEndPoint tp = do
     Left  e     -> error $ thisModule ++ ".createEndpoint: " ++ show e
 
 
--- Returns a list of connections from this node to all nodes (including itself).
--- Keeps re-trying to connect until successful; risk of deadlock!!!
-connectToAllNodes :: [Node] -> IO [NT.Connection]
-connectToAllNodes all_nodes = do
-   ep <- myEP
-   mapM (connectTo ep) all_nodes
-     where
-       connectTo ep node = do
-         c <- NT.connect ep (address node)
-                NT.ReliableOrdered NT.defaultConnectHints
-         case c of
-           Left _     -> connectTo ep node  -- keep re-trying
-           Right conn -> return conn
-
-
 -- Deserialize node; abort on error.
 decodeNode :: Strict.ByteString -> Node
 decodeNode bs =
   case decode bs of
     Right node -> node
     Left e     -> error $ thisModule ++ ".decodeNode: " ++ show e
+
+
+-- Instantiate CacheMappable class to make connection cache work.
+instance CacheMappable Node NT.Connection where
+
+  -- Create a new (heavyweight) connection to the given node.
+  create node = do
+    ep <- myEP
+    c <- NT.connect ep (address node) NT.ReliableOrdered NT.defaultConnectHints
+    case c of
+      Left _     -> create node  -- keep re-trying
+      Right conn -> return conn
+
+  -- Close the given connection.
+  destroy _ conn = NT.close conn
 
 
 -----------------------------------------------------------------------------
@@ -303,17 +308,11 @@ receive = msgQ >>= readChan
 --   TODO: output error messages in DEBUG mode.
 send :: Node -> Payload -> IO ()
 send dest message = do
-  -- establish new lightweight connection; should be fast but will
-  -- connection cache in future
-  ep <- myEP
-  c <- NT.connect ep (address dest) NT.ReliableOrdered NT.defaultConnectHints
-  case c of
-    Left _     -> return ()    -- ignore connection errors
-    Right conn -> do
-      ok <- NT.send conn $ LBS.toChunks message
-      case ok of
-        Left _   -> return ()  -- ignore send errors
-        Right () -> return ()
+  conn <- connections >>= (! dest)  -- lookup connection; create if non-existent
+  ok <- NT.send conn $ LBS.toChunks message
+  case ok of
+    Left _   -> return ()  -- ignore send errors
+    Right () -> return ()
 
 
 -----------------------------------------------------------------------------
