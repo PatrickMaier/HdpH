@@ -46,9 +46,13 @@ class (Eq k, Hashable k) => CacheMappable k v where
 data CM k v = CM !Int !(HashMap k v)
 
 
--- | A CacheMap is a mutable object mapping keys to values.
---   Only a fixed number of key/value pairs can be stored in a CacheMap
---   unless its size is negative (in which case it is an unbounded cache).
+-- | A CacheMap is a mutable object mapping a fixed number of keys to values.
+--   Lookup will automatically insert missing entries. Insertion will
+--   automatically evict a randomly chosen entries if the CacheMap is full.
+--
+--   Special cases:
+--   * A CacheMap of size 0 performs no caching at all.
+--   * A CacheMap of negative size is an unbounded cache (ie. never evicts).
 newtype CacheMap k v = CacheMap (IORef (CM k v))
 
 
@@ -58,7 +62,7 @@ empty :: IO (CacheMap k v)
 empty = CacheMap <$> newIORef (CM 0 HashMap.empty)
 
 
--- | Returns the current number of cache entries.
+-- | Returns the current number of cache entries (which is non-negative).
 getEntries :: CacheMap k v -> IO Int
 getEntries  (CacheMap cmRef) = do
   CM _ hm <- readIORef cmRef
@@ -75,10 +79,9 @@ getSize (CacheMap cmRef) = do
 -- | Adjusts maximal number of entries in CacheMap.
 --   Flushes CacheMap if it contains more entries than allowed after adjustment;
 --   'resize 0' serves as a finalizer.
---   Calling 'resize' with any negative number yields an unbounded CacheMap.
 resize :: (CacheMappable k v) => Int -> CacheMap k v -> IO ()
 resize newSize (CacheMap cmRef) = do
-  maybe_flushed <- atomicModifyIORef' cmRef $ \ (CM cacheSize hm) ->
+  maybe_flushed <- atomicModifyIORef' cmRef $ \ (CM _ hm) ->
                      if newSize >= 0 && HashMap.size hm > newSize
                        then (CM newSize HashMap.empty, Just hm)
                        else (CM newSize hm,            Nothing)
