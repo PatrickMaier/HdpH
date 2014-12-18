@@ -33,7 +33,7 @@ module Control.Parallel.HdpH.Internal.Comm
   ) where
 
 import Prelude
-import Control.Concurrent (forkIO, killThread, threadDelay)
+import Control.Concurrent (forkIO, killThread)
 import Control.Concurrent.Chan (newChan, readChan, writeChan)
 import Control.DeepSeq (($!!))
 import Control.Exception (finally)
@@ -52,12 +52,13 @@ import qualified Network.Transport.TCP as TCP
 import Control.Parallel.HdpH.Conf (RTSConf(..))
 import Control.Parallel.HdpH.Dist (zero)
 import Control.Parallel.HdpH.Internal.Location 
-       (Node, address, mkNode, debug, dbgNone, dbgFailure)
+       (Node, address, mkNode, debug, dbgNone, dbgFailure, dbgMsgRcvd)
 import Control.Parallel.HdpH.Internal.State.Location
        (myNodeRef, allNodesRef, debugRef)
 import qualified Control.Parallel.HdpH.Internal.Data.DistMap as DistMap
 import Control.Parallel.HdpH.Internal.Data.CacheMap.Strict
-       (CacheMappable, create, destroy, empty, resize, (!))
+       (CacheMappable, create, destroy)
+import qualified Control.Parallel.HdpH.Internal.Data.CacheMap.Strict as CacheMap
 import Control.Parallel.HdpH.Internal.Topology (Bases, equiDistMap)
 import Control.Parallel.HdpH.Internal.Type.Comm
        (State(..), Payload, PayloadQ, ConnCache)
@@ -213,8 +214,8 @@ withCommDo conf0 action = do
     let !bases = equiDistMap all_nodes
 
     -- setup connection cache (unbounded size, for now)
-    connCache <- empty
-    resize (-1) connCache
+    connCache <- CacheMap.empty
+    CacheMap.resize (-1) connCache
 
 --    hPutStrLn stderr ("DEBUG.withCommDo.4: " ++ show me) >> hFlush stderr
 
@@ -291,11 +292,10 @@ instance CacheMappable Node NT.Connection where
     ep <- myEP
     c <- NT.connect ep (address node) NT.ReliableOrdered NT.defaultConnectHints
     case c of
-      Right conn -> return conn
-      Left _     -> do debug dbgFailure $
-                         thisModule ++ ".create: error to " ++ show node
-                       threadDelay 1000  -- connect error: re-try after 1ms
-                       create node
+      Right conn -> return $ Just conn
+      Left err   -> do debug dbgFailure $
+                         "Comm.connect to " ++ show node ++ ": " ++ show err
+                       return Nothing
 
   -- Close the given connection.
   destroy _ conn = NT.close conn
@@ -310,17 +310,20 @@ receive :: IO Payload
 receive = msgQ >>= readChan
 
 
--- | Send a payload message; errors are currently ignored.
+-- | Send a payload message.
+--   Errors are ignored (they are assumed to occur only during shutdown).
 send :: Node -> Payload -> IO ()
 send dest message = do
-  conn <- connections >>= (! dest)  -- lookup connection; create if non-existent
-  ok <- NT.send conn $ LBS.toChunks message
-  case ok of
-    Right () -> return ()
-    Left _   -> do debug dbgFailure $
-                     thisModule ++ ".send: error to " ++ show dest
-                   threadDelay 1000   -- send error: re-try after 1ms
-                   send dest message
+  -- lookup connection; create and cache if non-existent
+  maybe_conn <- CacheMap.lookup dest =<< connections
+  case maybe_conn of
+    Nothing   -> return ()  -- ignoring connection error
+    Just conn -> do
+      ok <- NT.send conn $ LBS.toChunks message
+      case ok of
+        Right () -> return ()
+        Left err -> debug dbgFailure $
+                      "Comm.send to " ++ show dest ++ ": " ++ show err
 
 
 -----------------------------------------------------------------------------
@@ -345,15 +348,15 @@ recv ep = do
   case event of
     NT.Received _ msg -> return $!! LBS.fromChunks msg  -- Q: ($!!) or ($!)?
     NT.ErrorEvent err -> do
-      debug dbgFailure $
-        thisModule ++ ".recv: ErrorEvent " ++ show err
+      debug dbgFailure $ "Comm.recv: " ++ show err
       case err of
         NT.TransportError (NT.EventConnectionLost addr) _ -> do
-          root <- rootNode  -- DODGY: May fail before root has been initialised.
+          root <- rootNode  -- DODGY: Could we reach this before root is init'd?
           if addr == address root
-            then do
-              -- Fatal: lost connection to root node.
-              error $ thisModule ++ ".recv: lost connection to root node"
+            then -- Fatal: lost connection to root node.
+                 error $ thisModule ++ ".recv: lost connection to root node"
             else recv ep -- ignore other lost connections
         _ -> recv ep     -- ignore ofter error events
-    _ -> recv ep         -- ignore other events
+    _ -> do
+      debug dbgMsgRcvd $ "Comm.recv: " ++ show event
+      recv ep            -- ignore other events
