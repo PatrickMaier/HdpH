@@ -33,7 +33,7 @@ module Control.Parallel.HdpH.Internal.Comm
   ) where
 
 import Prelude
-import Control.Concurrent (forkIO, killThread)
+import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Concurrent.Chan (newChan, readChan, writeChan)
 import Control.DeepSeq (($!!))
 import Control.Exception (finally)
@@ -294,7 +294,8 @@ instance CacheMappable Node NT.Connection where
       Right conn -> return conn
       Left _     -> do debug dbgFailure $
                          thisModule ++ ".create: error to " ++ show node
-                       create node  -- connect error: keep re-trying
+                       threadDelay 1000  -- connect error: re-try after 1ms
+                       create node
 
   -- Close the given connection.
   destroy _ conn = NT.close conn
@@ -318,7 +319,8 @@ send dest message = do
     Right () -> return ()
     Left _   -> do debug dbgFailure $
                      thisModule ++ ".send: error to " ++ show dest
-                   send dest message  -- send error: keep re-trying
+                   threadDelay 1000   -- send error: re-try after 1ms
+                   send dest message
 
 
 -----------------------------------------------------------------------------
@@ -342,18 +344,16 @@ recv ep = do
   event <- NT.receive ep
   case event of
     NT.Received _ msg -> return $!! LBS.fromChunks msg  -- Q: ($!!) or ($!)?
-    NT.ErrorEvent (NT.TransportError (NT.EventConnectionLost addr) _) -> do
+    NT.ErrorEvent err -> do
       debug dbgFailure $
-        thisModule ++ ".recv: connection lost"
-      root <- rootNode  -- DODGY: May fail if root has not yet been initialised.
-      if addr == address root
-        then do
-          -- Fatal: lost connection to root node.
-          error $ thisModule ++ ".recv: lost connection to root node"
-        else do
-          -- Ignore other error events.
-          recv ep
-    _ -> do -- ignore other events
-      debug dbgFailure $
-        thisModule ++ ".recv: encountered event " ++ show event
-      recv ep
+        thisModule ++ ".recv: ErrorEvent " ++ show err
+      case err of
+        NT.TransportError (NT.EventConnectionLost addr) _ -> do
+          root <- rootNode  -- DODGY: May fail before root has been initialised.
+          if addr == address root
+            then do
+              -- Fatal: lost connection to root node.
+              error $ thisModule ++ ".recv: lost connection to root node"
+            else recv ep -- ignore other lost connections
+        _ -> recv ep     -- ignore ofter error events
+    _ -> recv ep         -- ignore other events
