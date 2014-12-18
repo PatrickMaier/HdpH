@@ -27,6 +27,7 @@ Library
                    Control.Parallel.HdpH.Dist,
                    Control.Parallel.HdpH.Strategies
   other-modules:   Control.Parallel.HdpH.Internal.Comm,
+                   Control.Parallel.HdpH.Internal.Data.CacheMap.Strict,
                    Control.Parallel.HdpH.Internal.Data.Deque,
                    Control.Parallel.HdpH.Internal.Data.DistMap,
                    Control.Parallel.HdpH.Internal.Data.Sem,
