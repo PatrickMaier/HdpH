@@ -213,11 +213,11 @@ withCommDo conf0 action = do
     let !n = length all_nodes
     let !bases = equiDistMap all_nodes
 
-    -- setup connection cache (unbounded size, for now)
+    -- setup connection cache, sized according to RTSConf
     connCache <- CacheMap.empty
-    CacheMap.resize (-1) connCache
+    CacheMap.resize (numConns conf0) connCache
 
---    hPutStrLn stderr ("DEBUG.withCommDo.4: " ++ show me) >> hFlush stderr
+--    hPutStrLn stderr ("DEBUG.withCommDo.4: " ++ show me ++ ", conns=" ++ show (numConns conf0)) >> hFlush stderr
 
     -- set up fully initialised state
     atomicModifyIORef stateRef $ \ s ->
