@@ -9,6 +9,9 @@
 
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module Control.Parallel.HdpH.Internal.Comm
   ( -- * initialise comms layer
@@ -49,12 +52,16 @@ import qualified Network.Transport.TCP as TCP
 import Control.Parallel.HdpH.Conf (RTSConf(..))
 import Control.Parallel.HdpH.Dist (zero)
 import Control.Parallel.HdpH.Internal.Location 
-       (Node, address, mkNode, dbgNone)
+       (Node, address, mkNode, debug, dbgNone, dbgFailure, dbgMsgRcvd)
 import Control.Parallel.HdpH.Internal.State.Location
        (myNodeRef, allNodesRef, debugRef)
 import qualified Control.Parallel.HdpH.Internal.Data.DistMap as DistMap
+import Control.Parallel.HdpH.Internal.Data.CacheMap.Strict
+       (CacheMappable, create, destroy)
+import qualified Control.Parallel.HdpH.Internal.Data.CacheMap.Strict as CacheMap
 import Control.Parallel.HdpH.Internal.Topology (Bases, equiDistMap)
-import Control.Parallel.HdpH.Internal.Type.Comm (State(..), Payload, PayloadQ)
+import Control.Parallel.HdpH.Internal.Type.Comm
+       (State(..), Payload, PayloadQ, ConnCache)
 import Control.Parallel.HdpH.Internal.State.Comm (stateRef)
 #if defined(STARTUP_MPI)
 import Control.Parallel.HdpH.Internal.CommStartupMPI
@@ -145,13 +152,13 @@ transport = s_tp <$> readIORef stateRef
 myEP :: IO NT.EndPoint
 myEP = s_ep <$> readIORef stateRef
 
--- defined-not-used, maybe useful in future
-connections :: IO [NT.Connection]
-connections = s_conns <$> readIORef stateRef
+-- Connection cache
+connections :: IO ConnCache
+connections = s_connCache <$> readIORef stateRef
 
 -- Debug level; defined-not-used, maybe useful in future
-debug :: IO Int
-debug = debugLvl <$> conf
+debugLevel :: IO Int
+debugLevel = debugLvl <$> conf
 
 
 -----------------------------------------------------------------------------
@@ -160,8 +167,8 @@ debug = debugLvl <$> conf
 withCommDo :: RTSConf -> IO () -> IO ()
 withCommDo conf0 action = do
   -- check debug level
-  let debugLevel = debugLvl conf0
-  unless (debugLevel >= dbgNone) $
+  let debug_level = debugLvl conf0
+  unless (debug_level >= dbgNone) $
     error $ thisModule ++ ".withCommDo: debug level < none"
 
   -- create a transport
@@ -206,15 +213,16 @@ withCommDo conf0 action = do
     let !n = length all_nodes
     let !bases = equiDistMap all_nodes
 
-    -- create connections from this to all nodes (including itself)
-    conns <- connectToAllNodes all_nodes
+    -- setup connection cache, sized according to RTSConf
+    connCache <- CacheMap.empty
+    CacheMap.resize (numConns conf0) connCache
 
---    hPutStrLn stderr ("DEBUG.withCommDo.4: " ++ show me ++ ", length conns=" ++ show (length conns)) >> hFlush stderr
+--    hPutStrLn stderr ("DEBUG.withCommDo.4: " ++ show me ++ ", conns=" ++ show (numConns conf0)) >> hFlush stderr
 
     -- set up fully initialised state
     atomicModifyIORef stateRef $ \ s ->
       (s { s_nodes = n, s_allNodes = all_nodes, s_bases = bases, s_root = root,
-           s_conns = conns }, ())
+           s_connCache = connCache }, ())
 
     -- set current node in Location module
     -- NOTE: HdpH still relies on state in Location module;
@@ -267,27 +275,30 @@ createEndPoint tp = do
     Left  e     -> error $ thisModule ++ ".createEndpoint: " ++ show e
 
 
--- Returns a list of connections from this node to all nodes (including itself).
--- Keeps re-trying to connect until successful; risk of deadlock!!!
-connectToAllNodes :: [Node] -> IO [NT.Connection]
-connectToAllNodes all_nodes = do
-   ep <- myEP
-   mapM (connectTo ep) all_nodes
-     where
-       connectTo ep node = do
-         c <- NT.connect ep (address node)
-                NT.ReliableOrdered NT.defaultConnectHints
-         case c of
-           Left _     -> connectTo ep node  -- keep re-trying
-           Right conn -> return conn
-
-
 -- Deserialize node; abort on error.
 decodeNode :: Strict.ByteString -> Node
 decodeNode bs =
   case decode bs of
     Right node -> node
     Left e     -> error $ thisModule ++ ".decodeNode: " ++ show e
+
+
+-- Instantiate CacheMappable class to make connection cache work;
+-- orphan instance
+instance CacheMappable Node NT.Connection where
+
+  -- Create a new (heavyweight) connection to the given node.
+  create node = do
+    ep <- myEP
+    c <- NT.connect ep (address node) NT.ReliableOrdered NT.defaultConnectHints
+    case c of
+      Right conn -> return $ Just conn
+      Left err   -> do debug dbgFailure $
+                         "Comm.connect to " ++ show node ++ ": " ++ show err
+                       return Nothing
+
+  -- Close the given connection.
+  destroy _ conn = NT.close conn
 
 
 -----------------------------------------------------------------------------
@@ -299,21 +310,20 @@ receive :: IO Payload
 receive = msgQ >>= readChan
 
 
--- | Send a payload message; errors are currently ignored.
---   TODO: output error messages in DEBUG mode.
+-- | Send a payload message.
+--   Errors are ignored (they are assumed to occur only during shutdown).
 send :: Node -> Payload -> IO ()
 send dest message = do
-  -- establish new lightweight connection; should be fast but will
-  -- connection cache in future
-  ep <- myEP
-  c <- NT.connect ep (address dest) NT.ReliableOrdered NT.defaultConnectHints
-  case c of
-    Left _     -> return ()    -- ignore connection errors
-    Right conn -> do
+  -- lookup connection; create and cache if non-existent
+  maybe_conn <- CacheMap.lookup dest =<< connections
+  case maybe_conn of
+    Nothing   -> return ()  -- ignoring connection error
+    Just conn -> do
       ok <- NT.send conn $ LBS.toChunks message
       case ok of
-        Left _   -> return ()  -- ignore send errors
         Right () -> return ()
+        Left err -> debug dbgFailure $
+                      "Comm.send to " ++ show dest ++ ": " ++ show err
 
 
 -----------------------------------------------------------------------------
@@ -337,14 +347,16 @@ recv ep = do
   event <- NT.receive ep
   case event of
     NT.Received _ msg -> return $!! LBS.fromChunks msg  -- Q: ($!!) or ($!)?
-    NT.ErrorEvent (NT.TransportError (NT.EventConnectionLost addr) _) -> do
-      root <- rootNode  -- DODGY: May fail if root has not yet been initialised.
-      if addr == address root
-        then do
-          -- Fatal: lost connection to root node.
-          error $ thisModule ++ ".recv: lost connection to root node"
-        else do
-          -- Ignore other error events.
-          recv ep
-    _ -> do -- ignore other events
-      recv ep
+    NT.ErrorEvent err -> do
+      debug dbgFailure $ "Comm.recv: " ++ show err
+      case err of
+        NT.TransportError (NT.EventConnectionLost addr) _ -> do
+          root <- rootNode  -- DODGY: Could we reach this before root is init'd?
+          if addr == address root
+            then -- Fatal: lost connection to root node.
+                 error $ thisModule ++ ".recv: lost connection to root node"
+            else recv ep -- ignore other lost connections
+        _ -> recv ep     -- ignore ofter error events
+    _ -> do
+      debug dbgMsgRcvd $ "Comm.recv: " ++ show event
+      recv ep            -- ignore other events

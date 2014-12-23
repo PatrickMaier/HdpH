@@ -27,6 +27,7 @@ Library
                    Control.Parallel.HdpH.Dist,
                    Control.Parallel.HdpH.Strategies
   other-modules:   Control.Parallel.HdpH.Internal.Comm,
+                   Control.Parallel.HdpH.Internal.Data.CacheMap.Strict,
                    Control.Parallel.HdpH.Internal.Data.Deque,
                    Control.Parallel.HdpH.Internal.Data.DistMap,
                    Control.Parallel.HdpH.Internal.Data.Sem,
@@ -52,7 +53,7 @@ Library
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
-                   hashable >= 1.1 && < 2,
+                   hashable >= 1.2.1 && < 2,
                    mtl >= 2 && < 3,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
@@ -61,6 +62,7 @@ Library
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall
@@ -82,7 +84,7 @@ Executable hello
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
-                   hashable >= 1.1 && < 2,
+                   hashable >= 1.2.1 && < 2,
                    mtl >= 2 && < 3,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
@@ -91,6 +93,7 @@ Executable hello
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
@@ -110,7 +113,7 @@ Executable dist
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
-                   hashable >= 1.1 && < 2,
+                   hashable >= 1.2.1 && < 2,
                    mtl >= 2 && < 3,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
@@ -119,6 +122,7 @@ Executable dist
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
@@ -138,7 +142,7 @@ Executable fib
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
-                   hashable >= 1.1 && < 2,
+                   hashable >= 1.2.1 && < 2,
                    mtl >= 2 && < 3,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
@@ -147,6 +151,7 @@ Executable fib
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
@@ -166,7 +171,7 @@ Executable sumeuler
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
-                   hashable >= 1.1 && < 2,
+                   hashable >= 1.2.1 && < 2,
                    mtl >= 2 && < 3,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
@@ -175,6 +180,7 @@ Executable sumeuler
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
@@ -194,7 +200,7 @@ Executable sumeuler-2level
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
-                   hashable >= 1.1 && < 2,
+                   hashable >= 1.2.1 && < 2,
                    mtl >= 2 && < 3,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
@@ -203,6 +209,7 @@ Executable sumeuler-2level
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
@@ -222,7 +229,7 @@ Executable queens
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
-                   hashable >= 1.1 && < 2,
+                   hashable >= 1.2.1 && < 2,
                    mtl >= 2 && < 3,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
@@ -231,6 +238,7 @@ Executable queens
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
@@ -250,7 +258,7 @@ Executable nbody
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
-                   hashable >= 1.1 && < 2,
+                   hashable >= 1.2.1 && < 2,
                    mtl >= 2 && < 3,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
@@ -259,6 +267,7 @@ Executable nbody
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
+                   unordered-containers >= 0.1 && < 1,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
