@@ -4,7 +4,7 @@ HdpH Release History
 HdpH 0.2.3
 ----------
 
-Date:     16 Dec 2014
+Date:     23 Dec 2014
 Packages: hdph-0.2.3, hdph-closure-0.2.1, hdph-mpi-allgather-0.0.3
 Compiler: GHC 7.8 or GHC 7.6
 Notes:    Transitional release;
