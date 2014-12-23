@@ -92,10 +92,16 @@ data RTSConf =
         -- be @>=@ 'minFishDly'.
         -- Default is 1000000 (corresponding to 1 second).
 
-    numProcs   :: Int,
+    numProcs :: Int,
         -- ^ Number of nodes constituting the distributed runtime system.
         -- Only relevant to UDP startup.
         -- Must be positive. Default is 0 (ie. must be overridden manually).
+
+    numConns :: Int,
+        -- ^ Upper bound on the number of TCP connections cached by this node;
+        -- a negative number means there is no upper bound (in which case
+        -- the number of connections is bounded by the total number of nodes).
+        -- Default is -1 (ie. cache all connections).
 
     interface :: String,
         -- ^ Network interface, required to autodetect a node's
@@ -127,6 +133,7 @@ defaultRTSConf =
     minFishDly = 10000,    -- delay at least 10 milliseconds after failed FISH
     maxFishDly = 1000000,  -- delay up to 1 second after failed FISH
     numProcs   = 0,        -- override this default for UDP node discovery
+    numConns   = -1,       -- default: cache all TCP connections
     interface  = "eth0",   -- default network interface: 1st Ethernet adapter
     confFile   = "",       -- default config file: none
     path       = [] }      -- default path: empty list = no path
@@ -221,6 +228,8 @@ parseConfEntry hostname pid caps conf =
        return conf { maxFishDly = n })
   <++ (string "numProcs" >> skipEqual >> parseNat >>= \ n -> eof >>
        return conf { numProcs = n })
+  <++ (string "conns" >> skipEqual >> parseInt >>= \ i -> eof >>
+       return conf { numConns = i })
   <++ (string "nic" >> skipEqual >> parseWord >>= \ w -> eof >>
        return conf { interface = w })
   <++ (string "config" >> skipEqual >> parseWord >>= \ w -> eof >>

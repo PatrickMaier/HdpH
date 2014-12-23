@@ -37,27 +37,6 @@ import qualified Control.Parallel.HdpH.Strategies as Strategies (declareStatic)
 
 
 -----------------------------------------------------------------------------
--- 'Static' declaration
-
--- orphan ToClosure instances (unavoidably so)
-instance ToClosure Int where locToClosure = $(here)
-instance ToClosure Integer where locToClosure = $(here)
-
-declareStatic :: StaticDecl
-declareStatic =
-  mconcat
-    [HdpH.declareStatic,         -- declare Static deserialisers
-     Strategies.declareStatic,   -- from imported modules
-     declare (staticToClosure :: StaticToClosure Int),
-     declare (staticToClosure :: StaticToClosure Integer),
-     declare $(static 'dist_fib_abs),
-     declare $(static 'dnc_trivial_abs),
-     declare $(static 'dnc_decompose),
-     declare $(static 'dnc_combine),
-     declare $(static 'dnc_f)]
-
-
------------------------------------------------------------------------------
 -- sequential Fibonacci
 
 fib :: Int -> Integer
@@ -150,6 +129,30 @@ push_skel_fib nodes seqThreshold n = unClosure <$> skel (toClosure n)
 
 
 -----------------------------------------------------------------------------
+-- Static declaration (just before 'main')
+
+-- Empty splice; TH hack to make all environment abstractions visible.
+$(return [])
+
+-- orphan ToClosure instances (unavoidably so)
+instance ToClosure Int where locToClosure = $(here)
+instance ToClosure Integer where locToClosure = $(here)
+
+declareStatic :: StaticDecl
+declareStatic =
+  mconcat
+    [HdpH.declareStatic,         -- declare Static deserialisers
+     Strategies.declareStatic,   -- from imported modules
+     declare (staticToClosure :: StaticToClosure Int),
+     declare (staticToClosure :: StaticToClosure Integer),
+     declare $(static 'dist_fib_abs),
+     declare $(static 'dnc_trivial_abs),
+     declare $(static 'dnc_decompose),
+     declare $(static 'dnc_combine),
+     declare $(static 'dnc_f)]
+
+
+-----------------------------------------------------------------------------
 -- initialisation, argument processing and 'main'
 
 -- time an IO action
@@ -218,45 +221,33 @@ main = do
   case version of
       0 -> do (x, t) <- timeIO $ evaluate
                           (fib n)
-              putStrLn $
-                "{v0} fib " ++ show n ++ " = " ++ show x ++
-                " {runtime=" ++ show t ++ "}"
+              outputResults $ ["v0","0","0", show n, show x, show t]
       1 -> do (output, t) <- timeIO $ evaluate =<< runParIO conf
                                (par_fib seqThreshold n)
               case output of
-                Just x  -> putStrLn $
-                             "{v1, " ++ 
-                             "seqThreshold=" ++ show seqThreshold ++ "} " ++
-                             "fib " ++ show n ++ " = " ++ show x ++
-                             " {runtime=" ++ show t ++ "}"
+                Just x  -> outputResults $ ["v1",show seqThreshold, "0", show n, show x, show t]
                 Nothing -> return ()
       2 -> do (output, t) <- timeIO $ evaluate =<< runParIO conf
                                (dist_fib seqThreshold parThreshold n)
               case output of
-                Just x  -> putStrLn $
-                             "{v2, " ++
-                             "seqThreshold=" ++ show seqThreshold ++ ", " ++
-                             "parThreshold=" ++ show parThreshold ++ "} " ++
-                             "fib " ++ show n ++ " = " ++ show x ++
-                             " {runtime=" ++ show t ++ "}"
+                Just x  -> outputResults $ ["v2",show seqThreshold, show parThreshold, show n, show x, show t]
                 Nothing -> return ()
       3 -> do (output, t) <- timeIO $ evaluate =<< runParIO conf
                                (spark_skel_fib seqThreshold n)
               case output of
-                Just x  -> putStrLn $
-                             "{v3, " ++
-                             "seqThreshold=" ++ show seqThreshold ++ "} " ++
-                             "fib " ++ show n ++ " = " ++ show x ++
-                             " {runtime=" ++ show t ++ "}"
+                Just x  -> outputResults $ ["v3",show seqThreshold, "0", show n, show x, show t]
                 Nothing -> return ()
       4 -> do (output, t) <- timeIO $ evaluate =<< runParIO conf
                                (allNodes >>= \ nodes ->
                                 push_skel_fib nodes seqThreshold n)
               case output of
-                Just x  -> putStrLn $
-                             "{v4, " ++
-                             "seqThreshold=" ++ show seqThreshold ++ "} " ++
-                             "fib " ++ show n ++ " = " ++ show x ++
-                             " {runtime=" ++ show t ++ "}"
+                Just x  -> outputResults $ ["v4",show seqThreshold, "0", show n, show x, show t]
                 Nothing -> return ()
       _ -> return ()
+
+outputResults :: [String] -> IO ()
+outputResults [version, seqT, parT, input, output, runtime] =
+  mapM_ printTags $ zip tags [version, seqT, parT, input, output, runtime]
+    where tags = ["VERSION: ","SEQUENTIALTHRESHOLD: ", "PARALLELTHRESHOLD: ", "INPUT: ","OUTPUT: ","RUNTIME: "]
+          printTags (a,b) = putStrLn (a ++ b)
+outputResults _ = putStrLn "Not enough arguments to output results"

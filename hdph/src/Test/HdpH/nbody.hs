@@ -40,24 +40,6 @@ import qualified Control.Parallel.HdpH.Strategies as Strategies (declareStatic)
 
 
 -----------------------------------------------------------------------------
--- Static declaration
-
-instance ToClosure [Body] where locToClosure = $(here)
-instance ToClosure [Vector3] where locToClosure = $(here)
-instance ForceCC [Vector3] where locForceCC = $(here)
-
-declareStatic :: StaticDecl
-declareStatic =
-  mconcat
-    [HdpH.declareStatic,
-     Strategies.declareStatic,
-     declare (staticToClosure :: StaticToClosure [Body]),
-     declare (staticToClosure :: StaticToClosure [Vector3]),
-     declare (staticForceCC :: StaticForceCC [Vector3]),
-     declare $(static 'part_dvs_abs)]
-
-
------------------------------------------------------------------------------
 -- 3D vectors and scalars
 
 type Scalar = Double
@@ -327,6 +309,55 @@ chunk n xs = ys : chunk n zs where (ys,zs) = splitAt n xs
 
 
 -----------------------------------------------------------------------------
+-- auxiliary functions
+
+-- time an IO action
+timeIO :: IO a -> IO (a, NominalDiffTime)
+timeIO action = do t0 <- getCurrentTime
+                   x <- action
+                   t1 <- getCurrentTime
+                   return (x, diffUTCTime t1 t0)
+
+
+-- strict iteration
+iterate' :: Int -> (a -> a) -> a -> a
+iterate' n f x | n <= 0    = x
+               | otherwise = let fx = f x in iterate' (n-1) f $! fx
+
+
+-- strict iteration in a monad
+iterateM' :: (Monad m) => Int -> (a -> m a) -> a -> m a
+iterateM' n f x | n <= 0    = return x
+                | otherwise = do { fx <- f x; iterateM' (n-1) f $! fx }
+
+
+-- "deep" evaluation
+forceNF :: (NFData a) => a -> a
+forceNF x = x `deepseq` x
+
+
+-----------------------------------------------------------------------------
+-- Static declaration (just before 'main')
+
+-- Empty splice; TH hack to make all environment abstractions visible.
+$(return [])
+
+instance ToClosure [Body] where locToClosure = $(here)
+instance ToClosure [Vector3] where locToClosure = $(here)
+instance ForceCC [Vector3] where locForceCC = $(here)
+
+declareStatic :: StaticDecl
+declareStatic =
+  mconcat
+    [HdpH.declareStatic,
+     Strategies.declareStatic,
+     declare (staticToClosure :: StaticToClosure [Body]),
+     declare (staticToClosure :: StaticToClosure [Vector3]),
+     declare (staticForceCC :: StaticForceCC [Vector3]),
+     declare $(static 'part_dvs_abs)]
+
+
+-----------------------------------------------------------------------------
 -- initialisation, argument processing and 'main'
 
 -- initialize random number generator
@@ -443,31 +474,3 @@ main = do
                                    "J {runtime=" ++ show t ++ "}"
                 Nothing     -> return ()
       _ -> return ()
-
-
------------------------------------------------------------------------------
--- auxiliary functions
-
--- time an IO action
-timeIO :: IO a -> IO (a, NominalDiffTime)
-timeIO action = do t0 <- getCurrentTime
-                   x <- action
-                   t1 <- getCurrentTime
-                   return (x, diffUTCTime t1 t0)
-
-
--- strict iteration
-iterate' :: Int -> (a -> a) -> a -> a
-iterate' n f x | n <= 0    = x
-               | otherwise = let fx = f x in iterate' (n-1) f $! fx
-
-
--- strict iteration in a monad
-iterateM' :: (Monad m) => Int -> (a -> m a) -> a -> m a
-iterateM' n f x | n <= 0    = return x
-                | otherwise = do { fx <- f x; iterateM' (n-1) f $! fx }
-
-
--- "deep" evaluation
-forceNF :: (NFData a) => a -> a
-forceNF x = x `deepseq` x

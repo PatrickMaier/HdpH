@@ -1,10 +1,11 @@
 -- Test the overhead of explicit closure elimination,
 -- depending on whether closures are in WHNF, in NF, or serialised.
 --
+-- Will be compiled with -O0 to avoid optimizer affecting tests.
+--
 -- Author: Patrick Maier
 -----------------------------------------------------------------------------
 
-{-# OPTIONS_GHC -O0 #-}  -- get optimiser out of the way for these tests
 {-# LANGUAGE TemplateHaskell #-}
 
 module Main where
@@ -23,14 +24,7 @@ import System.Environment (getArgs)
 import Control.Parallel.HdpH.Closure
        (Closure, mkClosure, unClosure, Thunk(Thunk),
         StaticDecl, static, declare, register)
-
------------------------------------------------------------------------------
--- Static declaration
-
-declareStatic :: StaticDecl
-declareStatic =
-  mconcat
-    [declare $(static 'reduce_abs)]
+import qualified Control.Parallel.HdpH.Closure (declareStatic)
 
 -----------------------------------------------------------------------------
 -- time an IO action
@@ -108,6 +102,19 @@ redClosureBS xss = do
 
 
 -----------------------------------------------------------------------------
+-- Static declaration (just before 'main')
+
+-- Empty splice; TH hack to make all environment abstractions visible.
+$(return [])
+
+declareStatic :: StaticDecl
+declareStatic =
+  mconcat
+    [Control.Parallel.HdpH.Closure.declareStatic,
+     declare $(static 'reduce_abs)]
+
+
+-----------------------------------------------------------------------------
 -- argument parsing and main
 
 -- parse (optional) arguments in this order: 
@@ -157,3 +164,4 @@ main = do
              ", chunksize=" ++ show chunksize ++
              ", seed=" ++ show seed ++ "}  reduce=" ++ show z ++
              " {t=" ++ show t ++ "}"
+

@@ -112,28 +112,6 @@ spark = HdpH.spark one
 
 
 -----------------------------------------------------------------------------
--- Static declaration
-
-instance ForceCC (Closure a) where locForceCC = $(here)
-
-declareStatic :: StaticDecl
-declareStatic =
-  mconcat
-    [HdpH.declareStatic,  -- 'Static' decl of imported modules
-     declare (staticForceCC :: forall a . StaticForceCC (Closure a)),
-     declare $(static 'sparkClosure_abs),
-     declare $(static 'pushClosure_abs),
-     declare $(static 'evalClosureListClosure),
-     declare $(static 'parClosureMapM_abs),
-     declare $(static 'parMapM_abs),
-     declare $(static 'constReturnUnit),
-     declare $(static 'parDivideAndConquer_abs),
-     declare $(static 'pushDivideAndConquer_abs),
-     declare $(static 'parMapM2Level_abs),
-     declare $(static 'parMapM2LevelRelaxed_abs)]
-
-
------------------------------------------------------------------------------
 -- Strategy type
 
 -- | A @'Strategy'@ for type @a@ is a (semantic) identity in the @'Par'@ monad.
@@ -219,6 +197,9 @@ class (ToClosure a) => ForceCC a where
 -- @'ForceCC'@ instances; see the tutorial in module
 -- 'Control.Parallel.HdpH.Closure' for a more thorough explanation.
 type StaticForceCC a = Static (CDict () (Strategy (Closure a)))
+
+-- Empty splice; TH hack s.t. 'staticForceCC' below can see 'forceC'.
+$(return [])
 
 -- | @'Static'@ deserialiser required by a 'ForceCC' instance; see the tutorial
 -- in module 'Control.Parallel.HdpH.Closure' for a more thorough explanation.
@@ -707,10 +688,10 @@ parMapM2Level r clo_f clo_xs = do
   vs <- zipWithM spawn nodes chunks
   concat <$> mapM (\ v -> unClosure <$> get v) vs
     where
-      spawn q chunk = do
+      spawn q a_chunk = do
         v <- new
         gv <- glob v
-        pushTo $(mkClosure [|parMapM2Level_abs (r, clo_f, chunk, gv)|]) q
+        pushTo $(mkClosure [|parMapM2Level_abs (r, clo_f, a_chunk, gv)|]) q
         return v
 
 parMapM2Level_abs :: (Dist,
@@ -718,8 +699,8 @@ parMapM2Level_abs :: (Dist,
                       [Closure a],
                       GIVar (Closure [Closure b]))
                   -> Thunk (Par ())
-parMapM2Level_abs (r, clo_f, chunk, gv) =
-  Thunk $ parMapMLocal (div2 r) clo_f chunk >>= rput gv . toClosure
+parMapM2Level_abs (r, clo_f, a_chunk, gv) =
+  Thunk $ parMapMLocal (div2 r) clo_f a_chunk >>= rput gv . toClosure
 
 
 -- | Relaxed two-level bounded parallel map skeletons
@@ -734,10 +715,10 @@ parMapM2LevelRelaxed r clo_f clo_xs = do
   vs <- zipWithM spawn nodes chunks
   concat <$> mapM (\ v -> unClosure <$> get v) vs
     where
-      spawn q chunk = do
+      spawn q a_chunk = do
         v <- new
         gv <- glob v
-        pushTo $(mkClosure [|parMapM2LevelRelaxed_abs (r, clo_f, chunk, gv)|]) q
+        pushTo $(mkClosure [|parMapM2LevelRelaxed_abs (r,clo_f,a_chunk,gv)|]) q
         return v
 
 parMapM2LevelRelaxed_abs :: (Dist,
@@ -745,24 +726,24 @@ parMapM2LevelRelaxed_abs :: (Dist,
                              [Closure a],
                              GIVar (Closure [Closure b]))
                          -> Thunk (Par ())
-parMapM2LevelRelaxed_abs (r, clo_f, chunk, gv) =
-  Thunk $ parMapMLocal r clo_f chunk >>= rput gv . toClosure
+parMapM2LevelRelaxed_abs (r, clo_f, a_chunk, gv) =
+  Thunk $ parMapMLocal r clo_f a_chunk >>= rput gv . toClosure
 
 
--- | Chunk list 'xs' according to the given list of integers 'ks';
--- the result has as many chunks as the length of 'ks', and the length of
--- the i-th chunk is proportional to the size of k_i.
+-- | Chunk list 'as' according to the given list of integers 'ns';
+-- the result has as many chunks as the length of 'ns', and the length of
+-- the i-th chunk is proportional to the size of n_i.
 chunkWith :: [Int] -> [a] -> [[a]]
-chunkWith ks xs = chop ks xs
+chunkWith ns as = chop ns as
   where
-    n_xs   = length xs
-    sum_ks = sum ks
+    n_as   = length as
+    sum_ns = sum ns
     chop []     _  = []
     chop [_]    xs = [xs]
     chop (k:ks) xs = ys : chop ks zs
-                       where
-                         (ys,zs) = splitAt n xs
-                         n = round $ fromIntegral (n_xs*k) / fromIntegral sum_ks
+      where
+        (ys,zs) = splitAt chunk_sz xs
+        chunk_sz = round (fromIntegral (n_as*k) / fromIntegral sum_ns :: Double)
 
     
 -- | Sequential divide-and-conquer skeleton.
@@ -845,3 +826,28 @@ pushDivideAndConquer_abs :: ([Node],
                          -> Thunk (Closure a -> Par (Closure b))
 pushDivideAndConquer_abs (ns, trivial_clo, decompose_clo, combine_clo, f_clo) =
   Thunk $ pushDivideAndConquer ns trivial_clo decompose_clo combine_clo f_clo
+
+
+-----------------------------------------------------------------------------
+-- Static declaration (must be at end of module)
+
+-- Empty splice; TH hack to make all environment abstractions visible.
+$(return [])
+
+instance ForceCC (Closure a) where locForceCC = $(here)
+
+declareStatic :: StaticDecl
+declareStatic =
+  mconcat
+    [HdpH.declareStatic,  -- 'Static' decl of imported modules
+     declare (staticForceCC :: forall a . StaticForceCC (Closure a)),
+     declare $(static 'sparkClosure_abs),
+     declare $(static 'pushClosure_abs),
+     declare $(static 'evalClosureListClosure),
+     declare $(static 'parClosureMapM_abs),
+     declare $(static 'parMapM_abs),
+     declare $(static 'constReturnUnit),
+     declare $(static 'parDivideAndConquer_abs),
+     declare $(static 'pushDivideAndConquer_abs),
+     declare $(static 'parMapM2Level_abs),
+     declare $(static 'parMapM2LevelRelaxed_abs)]

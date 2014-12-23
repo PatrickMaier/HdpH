@@ -12,47 +12,28 @@ module Main where
 
 import Prelude
 import Control.Exception (evaluate)
-import Control.Monad (when, (<=<))
+import Control.Monad (when)
 import Data.List (stripPrefix)
 import Data.Functor ((<$>))
-import Data.List (transpose)
 import Data.Monoid (mconcat)
 import Data.Time.Clock (NominalDiffTime, diffUTCTime, getCurrentTime)
 import System.Environment (getArgs)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 import System.Random (mkStdGen, setStdGen)
 
-import Control.Parallel.HdpH 
+import Control.Parallel.HdpH
        (RTSConf(..), defaultRTSConf, updateConf,
         Par, runParIO,
         eval, time,
-        IVar, GIVar,
         Closure, unClosure, mkClosure,
         toClosure, ToClosure(locToClosure),
         static, StaticToClosure, staticToClosure,
         StaticDecl, declare, register, here)
 import qualified Control.Parallel.HdpH as HdpH (declareStatic)
 import Control.Parallel.HdpH.Dist (Dist, one)
-import Control.Parallel.HdpH.Strategies 
+import Control.Parallel.HdpH.Strategies
        (parMapMLocal, parMapM2Level, parMapM2LevelRelaxed)
 import qualified Control.Parallel.HdpH.Strategies as Strategies (declareStatic)
-
-
------------------------------------------------------------------------------
--- Static declaration
-
--- orphan ToClosure instances (unavoidably so)
-instance ToClosure Integer where locToClosure = $(here)
-instance ToClosure (Integer,Integer) where locToClosure = $(here)
-
-declareStatic :: StaticDecl
-declareStatic =
-  mconcat
-    [HdpH.declareStatic,         -- declare Static deserialisers
-     Strategies.declareStatic,   -- from imported modules
-     declare (staticToClosure :: StaticToClosure Integer),
-     declare (staticToClosure :: StaticToClosure (Integer,Integer)),
-     declare $(static 'sum_totient_seq)]
 
 
 -----------------------------------------------------------------------------
@@ -126,9 +107,6 @@ cdiv p q | r == 0    = k
          | otherwise = k + 1 where (k, r) = divMod p q
 
 
------------------------------------------------------------------------------
--- initialisation, argument processing and 'main'
-
 type Time = NominalDiffTime
 
 -- time an IO action
@@ -138,6 +116,29 @@ timeIO action = do t0 <- getCurrentTime
                    t1 <- getCurrentTime
                    return (x, diffUTCTime t1 t0)
 
+
+-----------------------------------------------------------------------------
+-- Static declaration (just before 'main')
+
+-- Empty splice; TH hack to make all environment abstractions visible.
+$(return [])
+
+-- orphan ToClosure instances (unavoidably so)
+instance ToClosure Integer where locToClosure = $(here)
+instance ToClosure (Integer,Integer) where locToClosure = $(here)
+
+declareStatic :: StaticDecl
+declareStatic =
+  mconcat
+    [HdpH.declareStatic,         -- declare Static deserialisers
+     Strategies.declareStatic,   -- from imported modules
+     declare (staticToClosure :: StaticToClosure Integer),
+     declare (staticToClosure :: StaticToClosure (Integer,Integer)),
+     declare $(static 'sum_totient_seq)]
+
+
+-----------------------------------------------------------------------------
+-- initialisation, argument processing and 'main'
 
 -- initialize random number generator
 initrand :: Int -> IO ()
@@ -160,7 +161,7 @@ parseOpts args = do
         Nothing -> return (conf, 0,      arg':args')
 
 
--- parse (optional) arguments in this order: 
+-- parse (optional) arguments in this order:
 -- * version to run
 -- * lower bound for Euler's totient function
 -- * upper bound for Euler's totient function
@@ -178,10 +179,13 @@ parseArgs (s:ss) =
        Nothing -> go defVers (s:ss)
 
 
-defVers  =     1 :: Int
-defLower =     1 :: Integer
-defUpper = 51200 :: Integer
-defTasks =   512 :: Integer
+defVers :: Int
+defVers  = 1
+
+defLower, defUpper, defTasks :: Integer
+defLower =     1
+defUpper = 51200
+defTasks =   512
 
 
 main :: IO ()
@@ -193,41 +197,33 @@ main = do
   (conf, seed, args) <- parseOpts opts_args
   let (version, lower, upper, gran_arg) = parseArgs args
   initrand seed
+  -- Output using one tag per line to make it easy for grep and HdpHBencher.
   case version of
-      0 -> do (x, t) <- timeIO $ evaluate
-                          (sum_totient lower upper)
-              putStrLn $
-                "{v0} sum $ map totient [" ++ show lower ++ ".." ++
-                show upper ++ "] = " ++ show x ++
-                " {runtime=" ++ show t ++ "}"
+      0 -> do (x, t) <- timeIO $ evaluate (sum_totient lower upper)
+              outputResults ["v0",show lower,show upper,show gran_arg,show x,"0",show t]
       1 -> do (output,t0) <- timeIO $ evaluate =<< runParIO conf
                                (sum_totient_1level lower upper gran_arg)
               case output of
-                Just (x,t) -> putStrLn $
-                                "{v1, tasks=" ++ show gran_arg ++ "} " ++
-                                "sum $ map totient [" ++ show lower ++ ".." ++
-                                show upper ++ "] = " ++ show x ++
-                                " {overhead=" ++ show (t0 - t) ++
-                                ", runtime=" ++ show t ++ "}"
+                Just (x,t) ->
+                  outputResults ["v1",show lower,show upper,show gran_arg,show x,show (t0 - t),show t]
                 Nothing    -> return ()
       2 -> do (output,t0) <- timeIO $ evaluate =<< runParIO conf
                                (sum_totient_2level lower upper gran_arg)
               case output of
-                Just (x,t) -> putStrLn $
-                                "{v2, tasks=" ++ show gran_arg ++ "} " ++
-                                "sum $ map totient [" ++ show lower ++ ".." ++
-                                show upper ++ "] = " ++ show x ++
-                                " {overhead=" ++ show (t0 - t) ++
-                                ", runtime=" ++ show t ++ "}"
+                Just (x,t) ->
+                  outputResults ["v2",show lower,show upper,show gran_arg,show x,show (t0 - t),show t]
                 Nothing    -> return ()
       3 -> do (output,t0) <- timeIO $ evaluate =<< runParIO conf
                                (sum_totient_2level_relax lower upper gran_arg)
               case output of
-                Just (x,t) -> putStrLn $
-                                "{v3, tasks=" ++ show gran_arg ++ "} " ++
-                                "sum $ map totient [" ++ show lower ++ ".." ++
-                                show upper ++ "] = " ++ show x ++
-                                " {overhead=" ++ show (t0 - t) ++
-                                ", runtime=" ++ show t ++ "}"
+                Just (x,t) ->
+                  outputResults ["v3",show lower,show upper,show gran_arg,show x,show (t0 - t),show t]
                 Nothing    -> return ()
       _ -> return ()
+
+outputResults :: [String] -> IO ()
+outputResults [version, boundl, boundu, gran, output, overhead, runtime] =
+  mapM_ printTags $ zip tags [version,boundl,boundu,gran,output,overhead,runtime]
+    where tags = ["VERSION: ","LOWERBOUND: ","UPPERBOUND: ","TASKSIZE: ","RESULT: ","OVERHEAD: ","RUNTIME: "]
+          printTags (a,b) = putStrLn (a ++ b)
+outputResults _ = putStrLn "Not enough arguments to output results"

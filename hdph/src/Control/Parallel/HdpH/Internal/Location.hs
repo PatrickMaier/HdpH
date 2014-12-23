@@ -11,11 +11,10 @@
 
 module Control.Parallel.HdpH.Internal.Location
   ( -- * node IDs (and their constitutent parts)
-    Node,                 -- instances: Eq, Ord, Show, NFData, Serialize
-    path,                 -- :: Node -> [String]
-    address,              -- :: Node -> NT.EndPointAddress
-    hash,                 -- :: Node -> Word32
-    mkNode,               -- :: [String] -> NT.EndPointAddress -> Node
+    Node,     -- instances: Eq, Ord, Show, NFData, Serialize, Hashable
+    path,     -- :: Node -> [String]
+    address,  -- :: Node -> NT.EndPointAddress
+    mkNode,   -- :: [String] -> NT.EndPointAddress -> Node
 
     -- * reading all node IDs and this node's own node ID
     allNodes,             -- :: IO [Node]
@@ -44,11 +43,11 @@ module Control.Parallel.HdpH.Internal.Location
 
 import Prelude hiding (error)
 import qualified Prelude (error)
-import Control.DeepSeq (NFData, rnf)
+import Control.DeepSeq (NFData)
 import Control.Exception (catch, evaluate)
 import Control.Monad (when)
 import Data.Functor ((<$>))
-import qualified Data.Hashable (Hashable, hash)
+import Data.Hashable (Hashable, hashWithSalt, hash)
 import Data.IORef (readIORef)
 import Data.Serialize (Serialize, put, get)
 import qualified Network.Transport as NT (EndPointAddress(..))
@@ -58,7 +57,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import Control.Parallel.HdpH.Internal.State.Location
        (myNodeRef, allNodesRef, debugRef)
 import Control.Parallel.HdpH.Internal.Type.Location
-       (Node(Node, address, path, hash), MyNodeException(MyNodeUnset))
+       (Node(Node, address, path, nodeHash), MyNodeException(MyNodeUnset))
 
 
 -----------------------------------------------------------------------------
@@ -69,20 +68,21 @@ import Control.Parallel.HdpH.Internal.Type.Location
 -- this constructor is only to be exported to module HdpH.Internal.Comm.
 mkNode :: [String] -> NT.EndPointAddress -> Node
 mkNode p addr =
-  h `seq` Node { address = addr, path = p, hash = h }  -- computing h forces
-    where                                              -- addr and p
-      h = fromIntegral $ Data.Hashable.hash (addr, p)
-
+  Node { nodeHash = hash (addr, p), address = addr, path = p }
+  -- Hyperstrictness is guaranteed as follows:
+  -- When a 'Node' is evaluated to WHNF the strictness annotation on field
+  -- 'nodeHash' forces computation of 'hash (addr, p)' which evaluates
+  -- the values of fields 'address' and 'path' to normal form.
 
 -- orphan instance
 instance Eq Node where
-  n1 == n2 = hash n1    == hash n2 &&    -- compare hash first (for speed)
+  n1 == n2 = hash n1    == hash n2 &&    -- compare hash 1st (for speed)
              address n1 == address n2
 
 -- orphan instance
 instance Ord Node where
   compare n1 n2 =
-    case compare (hash n1) (hash n2) of  -- compare hash first (for speed)
+    case compare (hash n1) (hash n2) of  -- compare hash 1st (for speed)
       EQ       -> compare (address n1) (address n2)
       lt_or_gt -> lt_or_gt
 
@@ -95,18 +95,21 @@ instance Show Node where
 instance NFData Node  -- default instance suffices (due to hyperstrictness)
 
 -- orphan instance
--- NOTE: Can't derive this instance because 'get' must ensure hyperstrictness
+instance Hashable Node where
+  hashWithSalt salt = hashWithSalt salt . nodeHash
+  hash = nodeHash
+
+-- orphan instance
+-- NOTE: Can't derive this instance because 'nodeHash' field is not serialised
+--       and 'get' must ensure hyperstrictness
 instance Serialize Node where
-  put n = put (hash n) >>
-          put (address n) >>
-          put (path n)
+  put n = put (path n) >>
+          put (address n)
   get = do
-    h    <- get
-    addr <- get
     p    <- get
-    let n = Node { address = addr, path = p, hash = h }
-    -- force h, addr and p to make Node n hyperstrict
-    h `seq` rnf addr `seq` rnf p `seq` return n
+    addr <- get
+    return $! mkNode p addr
+    -- Hyperstrictness guaranteed by ($!) and 'mkNode'.
 
 
 -----------------------------------------------------------------------------
@@ -178,4 +181,3 @@ dbgGRef      = 9  -- registry update
 
 deriving instance NFData NT.EndPointAddress
 deriving instance Serialize NT.EndPointAddress
-deriving instance Data.Hashable.Hashable NT.EndPointAddress

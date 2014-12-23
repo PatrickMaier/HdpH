@@ -31,7 +31,7 @@ module Control.Parallel.HdpH.Closure.Internal
     -- Closure dictionary type constructor
     CDict,            -- no instances
 
-    -- Type/data constructor marking return type of closure abstractions
+    -- Type/data constructor marking return type of environment abstractions
     Thunk(Thunk),     -- no instances
 
     -- eliminating Closures
@@ -49,16 +49,15 @@ module Control.Parallel.HdpH.Closure.Internal
 import Prelude hiding (exp)
 import Control.DeepSeq (NFData(rnf))
 import Control.Monad (unless)
-import Data.ByteString.Lazy (ByteString, unpack)
 import Data.Serialize (Serialize(put, get), Get, Put)
 import Language.Haskell.TH
-       (Q, Lit, Exp(AppE, VarE, TupE, ConE), ExpQ, Info(DataConI, VarI), reify,
+       (Q, Exp(AppE, VarE, LitE, TupE, ConE), ExpQ,
         Type(AppT, ArrowT, ConT, ForallT),
-        appsE, lam1E, conE, varE, global, litE, varP, stringL, tupleDataName)
+        Info(DataConI, VarI), reify, tupleDataName, stringL)
 import qualified Language.Haskell.TH as TH (Loc(..), location)
 import Language.Haskell.TH.Syntax
        (Name(Name), NameFlavour(NameG), NameSpace(VarName, DataName),
-        newName, pkgString, modString, occString)
+        pkgString, modString, occString)
 
 import Control.Parallel.HdpH.Closure.Static (Static, unstatic, staticAs)
 
@@ -79,7 +78,8 @@ instance Show (LocT a) where
 here :: ExpQ
 here = do
   loc <- TH.location
-  appsE [conE 'LocT, litE $ stringL $ showLoc loc]
+  let loc_strQ = return $ LitE $ stringL $ showLoc loc
+  [| LocT $loc_strQ |]
 
 
 -----------------------------------------------------------------------------
@@ -98,7 +98,8 @@ data CDict env a =
 
 -- | Construct a closure dictionary from a given environment abstraction.
 mkCDict :: (NFData env, Serialize env) => (env -> Thunk a) -> CDict env a
-mkCDict abs = CDict { putEnv = put, getEnv = get, rnfEnv = rnf, absEnv = abs }
+mkCDict env_abs =
+  CDict { putEnv = put, getEnv = get, rnfEnv = rnf, absEnv = env_abs }
 
 
 -- | Abstract type of explicit closures.
@@ -140,7 +141,7 @@ unClosure (Closure st_dict env) =
 
 
 -----------------------------------------------------------------------------
--- safely constructing Closures from closure abstractions
+-- safely constructing Closures from environment abstractions
 
 -- | Template Haskell transformation constructing a Closure from an expression.
 -- The expression must either be a single static closure (in which case the
@@ -152,7 +153,6 @@ mkClosure expQ = do
   let prf = "Control.Parallel.HdpH.Closure.mkClosure: "
   let err_msg = prf ++ "argument not of the form " ++
                 "'static_closure' or 'environment_abstraction (var,...,var)'"
-  let panic_msg = prf ++ "impossible case"
   exp <- expQ
   (name, env, is_abs) <- case exp of
     AppE (VarE clo_abs_name) vars -> return (clo_abs_name,  vars, True)
@@ -162,11 +162,14 @@ mkClosure expQ = do
     _                             -> fail err_msg
   unless (isGlobalName name) $ fail err_msg
   unless (isVarTuple env) $ fail err_msg
-  ty <- typeClosureAbs (const panic_msg) name
-  unless (isClosureAbsType ty == is_abs) $ fail err_msg
-  let st_dictQ = static name
+-- Note: 'typeClosureAbs' commented to avoid calling 'reify' in 'mkClosure';
+--       this may lead to less comprehensible error messages but should
+--       have no consequences otherwise.
+--  ty <- typeClosureAbs (const $ prf ++ "impossible case") name
+--  unless (isClosureAbsType ty == is_abs) $ fail err_msg
+  let st_dictQ = staticInternal prf is_abs name
   let envQ = return env
-  appsE [conE 'Closure, st_dictQ, envQ]
+  [| Closure $st_dictQ $envQ |]
 
 
 -- | Template Haskell transformation constructing a family of Closures from an
@@ -181,7 +184,6 @@ mkClosureLoc expQ = do
   let prf = "Control.Parallel.HdpH.Closure.mkClosureLoc: "
   let err_msg = prf ++ "argument not of the form " ++
                 "'static_closure' or 'environment_abstraction (var,...,var)'"
-  let panic_msg = prf ++ "impossible case"
   exp <- expQ
   (name, env, is_abs) <- case exp of
     AppE (VarE clo_abs_name) vars -> return (clo_abs_name,  vars, True)
@@ -191,12 +193,14 @@ mkClosureLoc expQ = do
     _                             -> fail err_msg
   unless (isGlobalName name) $ fail err_msg
   unless (isVarTuple env) $ fail err_msg
-  ty <- typeClosureAbs (const panic_msg) name
-  unless (isClosureAbsType ty == is_abs) $ fail err_msg
-  let st_dict_LocQ = staticLoc name
+-- Note: 'typeClosureAbs' commented to avoid calling 'reify' in 'mkClosureLoc';
+--       this may lead to less comprehensible error messages but should
+--       have no consequences otherwise.
+--  ty <- typeClosureAbs (const $ prf ++ "impossible case") name
+--  unless (isClosureAbsType ty == is_abs) $ fail err_msg
+  let st_dict_LocQ = staticLocInternal prf is_abs name
   let envQ = return env
-  loc <- newName "loc"
-  lam1E (varP loc) $ appsE [conE 'Closure, appsE [st_dict_LocQ, varE loc], envQ]
+  [| \ loc -> Closure ($st_dict_LocQ loc) $envQ |]
 
 
 -----------------------------------------------------------------------------
@@ -208,22 +212,27 @@ mkClosureLoc expQ = do
 static :: Name -> ExpQ
 static name = do
   let prf = "Control.Parallel.HdpH.Closure.static: "
-  let mkErrMsg1 nm = prf ++ nm ++ " not a global variable or data constructor"
-  let mkErrMsg2 nm = prf ++ nm ++ " not a variable or data constructor"
-  (expQ, label) <- labelClosureAbs mkErrMsg1 name
-  ty <- typeClosureAbs mkErrMsg2 name
-  if isClosureAbsType ty
-    then appsE [global 'mkStatic,  expQ, litE label]
-    else appsE [global 'mkStatic_, expQ, litE label]
+  let mkErrMsg nm = prf ++ nm ++ " not a variable or data constructor"
+  ty <- typeClosureAbs mkErrMsg name
+  staticInternal prf (isClosureAbsType ty) name
 
--- Called by 'static' if argument names an environment abstraction.
+-- Called by 'static' and 'mkClosure'.
+staticInternal :: String -> Bool -> Name -> ExpQ
+staticInternal prf is_abs name = do
+  let mkErrMsg nm = prf ++ nm ++ " not a global variable or data constructor"
+  (expQ, labelQ) <- labelClosureAbs mkErrMsg name
+  if is_abs
+    then [| mkStatic  $expQ $labelQ |]  -- name is env abs
+    else [| mkStatic_ $expQ $labelQ |]  -- name is static closure
+
+-- Called by 'staticInternal' if argument names an environment abstraction.
 {-# INLINE mkStatic #-}
 mkStatic :: (NFData env, Serialize env)
          => (env -> Thunk a) -> String -> Static (CDict env a)
 mkStatic env_abs label =
   staticAs (mkCDict env_abs) label
 
--- Called by 'static' if argument names a static closure.
+-- Called by 'staticInternal' if argument names a static closure.
 {-# INLINE mkStatic_ #-}
 mkStatic_ :: a -> String -> Static (CDict () a)
 mkStatic_ stat_clo label =
@@ -237,13 +246,18 @@ mkStatic_ stat_clo label =
 staticLoc :: Name -> ExpQ
 staticLoc name = do
   let prf = "Control.Parallel.HdpH.Closure.staticLoc: "
-  let mkErrMsg1 nm = prf ++ nm ++ " not a global variable or data constructor"
-  let mkErrMsg2 nm = prf ++ nm ++ " not a variable or data constructor"
-  (expQ, label) <- labelClosureAbs mkErrMsg1 name
-  ty <- typeClosureAbs mkErrMsg2 name
-  if isClosureAbsType ty
-    then appsE [global 'mkStaticLoc,  expQ, litE label]
-    else appsE [global 'mkStaticLoc_, expQ, litE label]
+  let mkErrMsg nm = prf ++ nm ++ " not a variable or data constructor"
+  ty <- typeClosureAbs mkErrMsg name
+  staticLocInternal prf (isClosureAbsType ty) name
+
+-- Called by 'staticLoc' and 'mkClosureLoc'.
+staticLocInternal :: String -> Bool -> Name -> ExpQ
+staticLocInternal prf is_abs name = do
+  let mkErrMsg nm = prf ++ nm ++ " not a global variable or data constructor"
+  (expQ, labelQ) <- labelClosureAbs mkErrMsg name
+  if is_abs
+    then [| mkStaticLoc  $expQ $labelQ |]  -- name is env abs
+    else [| mkStaticLoc_ $expQ $labelQ |]  -- name is static closure
 
 -- Called by 'staticLoc' if argument names an environment abstraction.
 {-# INLINE mkStaticLoc #-}
@@ -265,20 +279,21 @@ mkStaticLoc_ stat_clo label =
 -- auxiliary stuff: mostly operations involving variable names
 
 -- Expects the second argument to be a global variable or constructor name.
--- If so, returns a pair consisting of an expression (the closure abstraction
--- or static closure named by the argument) and a label representing the name;
--- otherwise fails with an error message constructed by the first argument.
+-- If so, returns a pair of expressions, the first of which is the denotation
+-- of the given name, and the second is a string expression uniquely labelling
+-- the given name; otherwise fails with an error message constructed by the
+-- first argument.
 {-# INLINE labelClosureAbs #-}
-labelClosureAbs :: (String -> String) -> Name -> Q (ExpQ, Lit)
+labelClosureAbs :: (String -> String) -> Name -> Q (ExpQ, ExpQ)
 labelClosureAbs mkErrMsg name =
-  let mkLabel pkg' mod' occ' = stringL $ pkgString pkg' ++ "/" ++
-                                         modString mod' ++ "." ++
-                                         occString occ'
+  let mkLabel pkg' mod' occ' =
+        LitE $ stringL $
+          pkgString pkg' ++ "/" ++ modString mod' ++ "." ++ occString occ'
     in case name of
          Name occ' (NameG VarName pkg' mod') ->
-           return (varE name, mkLabel pkg' mod' occ')
+           return (return $ VarE name, return $ mkLabel pkg' mod' occ')
          Name occ' (NameG DataName pkg' mod') ->
-           return (conE name, mkLabel pkg' mod' occ')
+           return (return $ ConE name, return $ mkLabel pkg' mod' occ')
          _ -> fail $ mkErrMsg $ show name
 
 

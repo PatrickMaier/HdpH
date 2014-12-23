@@ -1,5 +1,7 @@
 -- Distance-indexed maps, mapping non-zero distances to values
--- TODO: Improve doc and error messages
+--
+-- Author: Patrick Maier
+-----------------------------------------------------------------------------
 
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -28,7 +30,6 @@ import Control.Parallel.HdpH.Dist (Dist, zero, one, div2)
 thisModule :: String
 thisModule = "Control.Parallel.HdpH.Internal.Data.DistMap"
 
-
 -------------------------------------------------------------------------------
 -- distance-indexed lookup table
 
@@ -56,19 +57,17 @@ toDescList (DistMap arr) = assocs arr
 
 
 -- Update given distance-indexed map at distance 'r' with value 'u'.
--- If 'r' is too small for the map, updates the value of 'minDist'.
+-- Input map must be defined at 'r', or else 'update' aborts with an error.
 update :: Dist -> a -> DistMap a -> DistMap a
 update r v (DistMap arr)
-  | r == zero = error $ thisModule ++ ".update: at zero"
-  | otherwise = DistMap $! arr // [(max r $ snd $ bounds arr, v)]
+  | r < snd (bounds arr) = error $ thisModule ++ ".update: out of bounds"
+  | otherwise            = DistMap $! arr // [(r, v)]
 
 
 -- Look up distance 'r' in given distance-indexed map.
--- If 'r' is too small for the map, 'lookup' returns the value of 'minDist'.
+-- If 'r' is 'zero' or too small for the map, returns the value at 'minDist'.
 lookup :: Dist -> DistMap a -> a
-lookup r (DistMap arr) 
-  | r == zero = error $ thisModule ++ ".lookup: at zero"
-  | otherwise = arr ! (max r $ snd $ bounds arr)
+lookup r (DistMap arr) = arr ! (max r $ snd $ bounds arr)
 
 
 -- Distances at which given distance-indexed map is defined;
@@ -86,8 +85,8 @@ keysFromTo ub lb (DistMap arr)
   | otherwise = from ub
                   where
                     r_min = max lb $ snd $ bounds arr
-                    from !ub | r_min > ub = []
-                             | otherwise  = ub : from (div2 ub)
+                    from !r | r_min > r = []
+                            | otherwise = r : from (div2 r)
 
 
 -- Minimal distance occuring as key in the given distance-indexed map.

@@ -28,6 +28,7 @@ module Control.Parallel.HdpH.Internal.Scheduler
   ) where
 
 import Prelude hiding (error)
+import Control.Applicative (Applicative)
 import Control.Concurrent (ThreadId, forkIO, killThread)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar, tryPutMVar)
 import Control.Monad (unless, when, void)
@@ -35,7 +36,6 @@ import Data.Functor ((<$>))
 
 import Control.Parallel.HdpH.Closure (unClosure)
 import Control.Parallel.HdpH.Conf (RTSConf(scheds, wakeupDly))
-import Control.Parallel.HdpH.Dist (one)
 import qualified Control.Parallel.HdpH.Internal.Comm as Comm
        (myNode, allNodes, isRoot, send, receive, withCommDo)
 import qualified Control.Parallel.HdpH.Internal.Data.Deque as Deque (emptyIO)
@@ -48,7 +48,7 @@ import Control.Parallel.HdpH.Internal.Misc
        (encodeLazy, decodeLazy, ActionServer, newServer, killServer)
 import Control.Parallel.HdpH.Internal.Sparkpool
        (SparkM, blockSched, getLocalSpark, Msg(TERM,PUSH), dispatch,
-        readPoolSize, readFishSentCtr, readSparkRcvdCtr, readSparkGenCtr,
+        readFishSentCtr, readSparkRcvdCtr, readSparkGenCtr,
         readMaxSparkCtrs)
 import qualified Control.Parallel.HdpH.Internal.Sparkpool as Sparkpool (run)
 import Control.Parallel.HdpH.Internal.Threadpool
@@ -64,7 +64,7 @@ import Control.Parallel.HdpH.Internal.Type.Par
 
 -- The RTS monad hides monad stack (IO, SparkM, ThreadM) as abstract.
 newtype RTS a = RTS { unRTS :: ThreadM RTS a }
-                deriving (Functor, Monad)
+                deriving (Functor, Monad, Applicative)
 
 
 -- Fork a new thread to execute the given 'RTS' action; the integer 'n'
@@ -138,9 +138,9 @@ run_ conf main = do
         -- termination
         when is_root $ do
           -- root: send TERM msg to all nodes to lift termination barrier
-          all_nodes@(root:_) <- liftIO Comm.allNodes
+          everywhere <- liftIO Comm.allNodes
           let term_msg = encodeLazy (TERM me)
-          liftIO $ mapM_ (\ node -> Comm.send node term_msg) all_nodes
+          liftIO $ mapM_ (\ node -> Comm.send node term_msg) everywhere
 
         -- all nodes: block waiting for termination barrier
         liftIO $ takeMVar barrier

@@ -7,14 +7,15 @@
 {-# LANGUAGE TypeSynonymInstances #-}  -- req'd for ToClosure insts
 {-# LANGUAGE TemplateHaskell #-}       -- req'd for mkClosure, etc
 
+{-# OPTIONS_GHC -fno-warn-orphans #-}
+
 module Main where
 
 import Prelude
 import Control.DeepSeq (NFData)
 import Control.Monad (when, (<=<))
 import Data.Functor ((<$>))
-import Data.List (elemIndex, stripPrefix, transpose)
-import Data.Maybe (fromJust)
+import Data.List (stripPrefix, transpose)
 import Data.Monoid (mconcat)
 import System.Environment (getArgs)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
@@ -25,34 +26,15 @@ import Control.Parallel.HdpH
         Par, runParIO,
         force, fork, new, get, put,
         IVar,
-        Thunk(Thunk), Closure, mkClosure,
-        toClosure, ToClosure(locToClosure),
+        Thunk(Thunk), mkClosure,
+        ToClosure(locToClosure),
         static, StaticToClosure, staticToClosure,
         StaticDecl, declare, register, here)
 import qualified Control.Parallel.HdpH as HdpH (declareStatic)
 import Control.Parallel.HdpH.Strategies 
-       (Strategy, ForceCC(locForceCC),
-        parMapNF, parMapChunkedNF,
-        StaticForceCC, staticForceCC)
+       (parMapNF, parMapChunkedNF,
+        ForceCC(locForceCC), StaticForceCC, staticForceCC)
 import qualified Control.Parallel.HdpH.Strategies as Strategies (declareStatic)
-
-
------------------------------------------------------------------------------
--- Static declaration
-
-instance ToClosure Board where locToClosure = $(here)
-instance ToClosure [Board] where locToClosure = $(here)
-instance ForceCC [Board] where locForceCC = $(here)
-
-declareStatic :: StaticDecl
-declareStatic =
-  mconcat
-    [HdpH.declareStatic,
-     Strategies.declareStatic,
-     declare (staticToClosure :: StaticToClosure Board),
-     declare (staticToClosure :: StaticToClosure [Board]),
-     declare (staticForceCC :: StaticForceCC [Board]),
-     declare $(static 'clo_extendBoard_abs)]
 
 
 -----------------------------------------------------------------------------
@@ -83,8 +65,8 @@ extendBoard n board = [ row:board | row <- [1 .. n], safeAddition board row ]
 safeAddition :: Board -> Row -> Bool
 safeAddition board row0 = go board 1
   where
-    go []          _ = True
-    go (row:board) i = row0 /= row && abs (row0 - row) /= i && go board (i + 1)
+    go []         _ = True
+    go (row:rows) i = row0 /= row && abs (row0 - row) /= i && go rows (i + 1)
 
 
 -----------------------------------------------------------------------------
@@ -195,6 +177,27 @@ threshchunkfarm_queens t k n | n <= 0    = return []
 
 
 -----------------------------------------------------------------------------
+-- Static declaration (just before 'main')
+
+-- Empty splice; TH hack to make all environment abstractions visible.
+$(return [])
+
+instance ToClosure Board where locToClosure = $(here)
+instance ToClosure [Board] where locToClosure = $(here)
+instance ForceCC [Board] where locForceCC = $(here)
+
+declareStatic :: StaticDecl
+declareStatic =
+  mconcat
+    [HdpH.declareStatic,
+     Strategies.declareStatic,
+     declare (staticToClosure :: StaticToClosure Board),
+     declare (staticToClosure :: StaticToClosure [Board]),
+     declare (staticForceCC :: StaticForceCC [Board]),
+     declare $(static 'clo_extendBoard_abs)]
+
+
+-----------------------------------------------------------------------------
 -- initialisation and argument processing and 'main'
 
 -- initialize random number generator
@@ -235,10 +238,11 @@ parseArgs (s:ss) =
        Just s' -> go (read s') ss
        Nothing -> go defVers (s:ss)
 
-defVers  =   4 :: Int
-defN     =  12 :: Int
-defGran1 =  10 :: Int
-defGran2 = 100 :: Int
+defVers, defN, defGran1, defGran2 :: Int
+defVers  =   4
+defN     =  12
+defGran1 =  10
+defGran2 = 100
 
 
 main :: IO ()

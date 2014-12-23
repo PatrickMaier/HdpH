@@ -1,10 +1,11 @@
 -- Test the overhead of nested explicit closures,
 -- depending on whether closures are in WHNF, in NF, or serialised.
 --
+-- Will be compiled with -O0 to avoid optimizer affecting tests.
+--
 -- Author: Patrick Maier
 -----------------------------------------------------------------------------
 
-{-# OPTIONS_GHC -O0 #-}  -- get optimiser out of the way for these tests
 {-# LANGUAGE TemplateHaskell #-}
 
 module Main where
@@ -23,16 +24,7 @@ import System.Environment (getArgs)
 import Control.Parallel.HdpH.Closure
        (Closure, mkClosure, unClosure, Thunk(Thunk),
         StaticDecl, static, declare, register)
-
------------------------------------------------------------------------------
--- Static declaration
-
-declareStatic :: StaticDecl
-declareStatic =
-  mconcat
-    [declare $(static 'reduce_abs),
-     declare $(static 'mkFlat_abs),
-     declare $(static 'mkNested_abs)]
+import qualified Control.Parallel.HdpH.Closure (declareStatic)
 
 -----------------------------------------------------------------------------
 -- time an IO action
@@ -141,6 +133,21 @@ redNestedBS xss = timeIO $ do
                     let bs = encode $ mkNested xss
                     evaluate (bs `seq` ())
                     evaluate (unClosure $ either error id $ decode bs)
+
+
+-----------------------------------------------------------------------------
+-- Static declaration (just before 'main')
+
+-- Empty splice; TH hack to make all environment abstractions visible.
+$(return [])
+
+declareStatic :: StaticDecl
+declareStatic =
+  mconcat
+    [Control.Parallel.HdpH.Closure.declareStatic,
+     declare $(static 'reduce_abs),
+     declare $(static 'mkFlat_abs),
+     declare $(static 'mkNested_abs)]
 
 
 -----------------------------------------------------------------------------

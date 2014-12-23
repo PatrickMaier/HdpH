@@ -4,6 +4,7 @@
 -----------------------------------------------------------------------------
 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}  -- for 'GIVar' and 'Node'
+{-# LANGUAGE FlexibleInstances #-}           -- for some 'ToClosure' instances
 {-# LANGUAGE TemplateHaskell #-}             -- for 'mkClosure', etc.
 
 module Control.Parallel.HdpH
@@ -18,10 +19,11 @@ module Control.Parallel.HdpH
     -- * Operations in the Par monad
     -- $Par_ops
     done,      -- :: Par a
---    yield,     -- :: Par ()
+--    yield,     -- :: Par ()  -- Nice to have but isn't implemented yet
     myNode,    -- :: Par Node
     allNodes,  -- :: Par [Node]
     equiDist,  -- :: Dist -> Par [(Node,Int)]
+    allNodesWithin,  -- :: Dist -> Par (Closure [Node])
     time,      -- :: Par a -> Par (a, NominalDiffTime)
     io,        -- :: IO a -> Par a
     eval,      -- :: a -> Par a
@@ -66,8 +68,9 @@ module Control.Parallel.HdpH
 import Prelude hiding (error, lookup)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.DeepSeq (NFData, deepseq)
-import Control.Monad (when, void)
+import Control.Monad (when, void, forM)
 import Data.Functor ((<$>))
+import Data.Hashable (Hashable)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Monoid (mconcat)
 import Data.Serialize (Serialize)
@@ -78,7 +81,7 @@ import Control.Parallel.HdpH.Closure hiding (declareStatic)  -- re-export almost
 import qualified Control.Parallel.HdpH.Closure as Closure (declareStatic)
 import Control.Parallel.HdpH.Dist                            -- re-export whole module
 import qualified Control.Parallel.HdpH.Internal.Comm as Comm
-       (myNode, allNodes, isRoot, equiDistBases)
+       (myNode, isRoot, equiDistBases)
 import qualified Control.Parallel.HdpH.Internal.Data.DistMap as DistMap
        (lookup)
 import qualified Control.Parallel.HdpH.Internal.IVar as IVar (IVar, GIVar)
@@ -97,22 +100,6 @@ import Control.Parallel.HdpH.Internal.Sparkpool (putLocalSpark)
 import Control.Parallel.HdpH.Internal.Threadpool (putThread, putThreads)
 import Control.Parallel.HdpH.Internal.Type.Par
        (ParM(Par), Thread(Atom), ThreadCont(ThreadCont, ThreadDone))
-
-
------------------------------------------------------------------------------
--- Static declaration
-
--- | Static declaration of Static deserialisers used in explicit Closures
--- created or imported by this module.
--- This Static declaration must be imported by every main module using HdpH.
--- The imported Static declaration must be combined with the main module's own
--- Static declaration and registered; failure to do so may abort the program
--- at runtime.
-declareStatic :: StaticDecl
-declareStatic = mconcat
-  [Closure.declareStatic,
-   declare $(static 'spawn_abs),
-   declare $(static 'rput_abs)]
 
 
 -----------------------------------------------------------------------------
@@ -147,10 +134,10 @@ declareStatic = mconcat
 -- abstract locations and distance metric
 
 -- | A 'Node' identifies a node (that is, an OS process running HdpH).
--- A 'Node' should be thought of as an abstract identifier which
--- instantiates the classes 'Eq', 'Ord', 'Show', 'NFData' and 'Serialize'.
+-- A 'Node' should be thought of as an abstract identifier which instantiates
+-- the classes 'Eq', 'Ord', 'Hashable', 'Show', 'NFData' and 'Serialize'.
 newtype Node = Node Location.Node
-                 deriving (Eq, Ord, NFData, Serialize)
+                 deriving (Eq, Ord, Hashable, NFData, Serialize)
 
 -- Show instance (mainly for debugging)
 instance Show Node where
@@ -355,12 +342,37 @@ myNode :: Par Node
 myNode = Node <$> (atom $ const $ liftIO $ Comm.myNode)
 
 -- | Returns a list of all nodes currently forming the distributed
--- runtime system.
+--   runtime system, where the head of the list is the current node.
+--   This operation may query all nodes, which may incur significant latency.
 allNodes :: Par [Node]
-{-# INLINE allNodes #-}
-allNodes = map Node <$> (atom $ const $ liftIO $ Comm.allNodes)
+allNodes = unClosure <$> allNodesWithin one
 
+-- | Returns a list of all nodes within the given distance around the
+--   current node (which is the head of the list).
+allNodesWithin :: Dist -> Par (Closure [Node])
+allNodesWithin r = do
+  let half_r = div2 r
+  (this,near_size):rest_basis <- equiDist r
+  vs <- forM rest_basis $ \ (q,n) -> do
+          v <- new
+          if n > 1
+            then do -- remote recurive call
+                    gv <- glob v
+                    pushTo $(mkClosure [| allNodesWithin_abs (half_r, gv) |]) q
+            else put v $ toClosure [q]
+          return v
+  near_nodes <-
+    if near_size > 1
+      then unClosure <$> allNodesWithin half_r  -- local recursive call
+      else return [this]
+  rest_nodes <- mapM (fmap unClosure . get) vs
+  return $ toClosure $ concat (near_nodes : rest_nodes)
+
+allNodesWithin_abs :: (Dist, GIVar (Closure [Node])) -> Thunk (Par ())
+allNodesWithin_abs (half_r, gv) = Thunk $ allNodesWithin half_r >>= rput gv
+              
 -- | Returns an equidistant basis of radius 'r' around the current node.
+--   By convention, the head of the list is the current node.
 equiDist :: Dist -> Par [(Node,Int)]
 equiDist r = map (\ (p, n) -> (Node p, n)) . DistMap.lookup r <$>
                (atom $ const $ liftIO Comm.equiDistBases)
@@ -465,3 +477,26 @@ rput_abs (GIVar gv, clo) =
 stub :: Par () -> Par ()
 {-# INLINE stub #-}
 stub = atom . const . void . forkStub . execThread . mkThread
+
+
+-----------------------------------------------------------------------------
+-- Static declaration (must be at end of module)
+
+-- Empty splice; TH hack to make all environment abstractions visible.
+$(return [])
+
+instance ToClosure [Node] where locToClosure = $(here)
+
+-- | Static declaration of Static deserialisers used in explicit Closures
+-- created or imported by this module.
+-- This Static declaration must be imported by every main module using HdpH.
+-- The imported Static declaration must be combined with the main module's own
+-- Static declaration and registered; failure to do so may abort the program
+-- at runtime.
+declareStatic :: StaticDecl
+declareStatic = mconcat
+  [Closure.declareStatic,
+   declare (staticToClosure :: StaticToClosure [Node]),
+   declare $(static 'allNodesWithin_abs),
+   declare $(static 'spawn_abs),
+   declare $(static 'rput_abs)]

@@ -15,7 +15,6 @@ module Control.Parallel.HdpH.Internal.Type.Location
 
 import Prelude
 import Control.Exception (Exception)
-import Data.Word (Word32)
 import Data.Typeable (Typeable)
 import qualified Network.Transport as NT (EndPointAddress)
 
@@ -29,11 +28,19 @@ import qualified Network.Transport as NT (EndPointAddress)
 -- Internally, a 'Node' is a hyperstrict record consisting of an 'address'
 -- field (uniquely identifying the node, and used for establishing network
 -- connections), a 'path' field for computing distance in the topology and
--- a 32-bit 'hash' field (for quickly comparing nodes). Note that 'address'
--- is the key field, \ie comparisons could ignore 'hash' and 'path'.
-data Node = Node { hash    :: !Word32,
-                   address :: !NT.EndPointAddress, 
-                   path    :: ![String] }
+-- a 'hash' field (for quick comparison, and for hash table access nodes).
+data Node = Node { nodeHash :: !Int,  -- Data.Hashable uses Int for hash keys.
+                   address  :: !NT.EndPointAddress, 
+                   path     :: ![String] }
+
+-- Notes:
+-- * Currently, 'address' is the key field, ie. comparisons could ignore 
+--   'hash' and 'path'. 
+-- * An alternative design might consider making 'path' the key field. 
+-- * A more optimal representation of 'path' should be considered, eg. as
+--   an array of unboxed Word16s. For all practical purposes, such a path
+--   could be serialised into two 64-bit words (into one for flatter 
+--   hierarchies).
 
 
 -----------------------------------------------------------------------------

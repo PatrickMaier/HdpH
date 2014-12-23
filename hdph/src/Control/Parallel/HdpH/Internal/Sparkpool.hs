@@ -64,7 +64,7 @@ import Control.Parallel.HdpH.Internal.Data.Deque
         lengthIO, maxLengthIO)
 import Control.Parallel.HdpH.Internal.Data.DistMap (DistMap)
 import qualified Control.Parallel.HdpH.Internal.Data.DistMap as DistMap
-       (new, toDescList, lookup, keys, keysFromTo, minDist)
+       (new, toDescList, lookup, keys, minDist)
 import Control.Parallel.HdpH.Internal.Data.Sem (Sem)
 import qualified Control.Parallel.HdpH.Internal.Data.Sem as Sem (wait, signal)
 import Control.Parallel.HdpH.Internal.Location
@@ -216,17 +216,6 @@ getMaxFishDly = maxFishDly <$> s_conf <$> ask
 
 singleNode :: SparkM m Bool
 singleNode = (< 2) <$> liftIO Comm.nodes
-
-{- OBSOLETE
-equiDist :: Dist -> SparkM m [Node]
-equiDist r = map fst . DistMap.lookup r <$> liftIO Comm.equiDistBases
-
-equiDistUpto :: Dist -> SparkM m [Node]
-equiDistUpto r = do
-  bases <- liftIO Comm.equiDistBases
-  let rs = DistMap.keysFromTo r zero bases
-  return $ concat $ map (map fst . flip DistMap.lookup bases) rs
--}
 
 getEquiDistBasesIO :: IO (DistMap [(Node, Int)])
 getEquiDistBasesIO = Comm.equiDistBases

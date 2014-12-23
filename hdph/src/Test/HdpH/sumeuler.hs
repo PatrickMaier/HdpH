@@ -40,29 +40,6 @@ import qualified Control.Parallel.HdpH.Strategies as Strategies (declareStatic)
 
 
 -----------------------------------------------------------------------------
--- Static declaration
-
--- orphan ToClosure and ForceCC instances (unavoidably so)
-instance ToClosure Int where locToClosure = $(here)
-instance ToClosure [Int] where locToClosure = $(here)
-instance ToClosure Integer where locToClosure = $(here)
-instance ForceCC Integer where locForceCC = $(here)
-
-declareStatic :: StaticDecl
-declareStatic =
-  mconcat
-    [HdpH.declareStatic,         -- declare Static deserialisers
-     Strategies.declareStatic,   -- from imported modules
-     declare (staticToClosure :: StaticToClosure Int),
-     declare (staticToClosure :: StaticToClosure [Int]),
-     declare (staticToClosure :: StaticToClosure Integer),
-     declare (staticForceCC :: StaticForceCC Integer),
-     declare $(static 'spark_sum_euler_abs),
-     declare $(static 'sum_totient),
-     declare $(static 'totient)]
-
-
------------------------------------------------------------------------------
 -- Euler's totient function (for positive integers)
 
 totient :: Int -> Integer
@@ -180,6 +157,32 @@ slice n = transpose . chunk n
 
 unslice :: [[a]] -> [a]
 unslice = concat . transpose
+
+
+-----------------------------------------------------------------------------
+-- Static declaration (just before 'main')
+
+-- Empty splice; TH hack to make all environment abstractions visible.
+$(return [])
+
+-- orphan ToClosure and ForceCC instances (unavoidably so)
+instance ToClosure Int where locToClosure = $(here)
+instance ToClosure [Int] where locToClosure = $(here)
+instance ToClosure Integer where locToClosure = $(here)
+instance ForceCC Integer where locForceCC = $(here)
+
+declareStatic :: StaticDecl
+declareStatic =
+  mconcat
+    [HdpH.declareStatic,         -- declare Static deserialisers
+     Strategies.declareStatic,   -- from imported modules
+     declare (staticToClosure :: StaticToClosure Int),
+     declare (staticToClosure :: StaticToClosure [Int]),
+     declare (staticToClosure :: StaticToClosure Integer),
+     declare (staticForceCC :: StaticForceCC Integer),
+     declare $(static 'spark_sum_euler_abs),
+     declare $(static 'sum_totient),
+     declare $(static 'totient)]
 
 
 -----------------------------------------------------------------------------

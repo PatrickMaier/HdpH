@@ -1,5 +1,7 @@
 -- Topology
--- TODO: Improve doc and error messages
+--
+-- Author: Patrick Maier
+-----------------------------------------------------------------------------
 
 module Control.Parallel.HdpH.Internal.Topology
   ( -- * ultrametric distance
@@ -18,7 +20,7 @@ import Control.DeepSeq (($!!))
 import Control.Parallel.HdpH.Dist (Dist, zero, one, div2)
 import Control.Parallel.HdpH.Internal.Location (Node, path)
 import Control.Parallel.HdpH.Internal.Data.DistMap (DistMap, new)
-import Control.Parallel.HdpH.Internal.Misc (takeUntil)
+import Control.Parallel.HdpH.Internal.Misc (takeWeakUntil)
 
 thisModule :: String
 thisModule = "Control.Parallel.HdpH.Internal.Topology"
@@ -64,7 +66,9 @@ equiDist ps@(p0:_) r | r == zero = [(p0, 1)]
 -- Note that the map is fully normalised.
 equiDistMap :: [Node] -> Bases
 equiDistMap ps =
-  new $!! takeUntil smallestBasis $ map (equiDist ps) $ iterate div2 one
+  new $!! takeWeakUntil smallestBasis $ map (equiDist ps) $ iterate div2 one
     where
       smallestBasis [(_, 1)] = True
       smallestBasis _        = False
+
+
