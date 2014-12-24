@@ -1,6 +1,5 @@
-## INSTALLING hdph-0.2.1
 ##
-## Requires: cabal >= 1.18, ghc-7.6.3, mpiexec on $PATH
+## INSTALLING hdph
 ##
 
 ##
@@ -8,11 +7,11 @@
 ##
 
 cabal sandbox init
+cabal sandbox add-source /PATH/TO/hdph-closure
+cabal sandbox add-source /PATH/TO/hdph
+cabal install hdph --enable-shared
 
-cabal install ../hdph-closure-0.2.0.tar.gz
-
-cabal install
-
+## Test launch
 mpiexec -n 3 .cabal-sandbox/bin/hello +HdpH -numProcs=3 -HdpH
 
 
@@ -21,13 +20,12 @@ mpiexec -n 3 .cabal-sandbox/bin/hello +HdpH -numProcs=3 -HdpH
 ##
 
 cabal sandbox init
+cabal sandbox add-source /PATH/TO/hdph-mpi-allgather
+cabal install hdph-mpi-allgather --enable-shared --flags=(LibOpenMPI|LibMPICH) --extra-include-dirs=/PATH/TO/MPI/include --extra-lib-dirs=/PATH/TO/MPI/lib
+export LD_LIBRARY_PATH=/PATH/TO/MPI/lib
+cabal sandbox add-source /PATH/TO/hdph-closure
+cabal sandbox add-source /PATH/TO/hdph
+cabal install hdph --enable-shared --flags=WithMPI
 
-## Install hdph-mpi-allgather-0.0.2 as per instructions there
-##   (without "--flags=BuildTest")
-
-cabal install ../hdph-closure-0.2.0.tar.gz
-
-cabal install --flags=WithMPI
-
-export LD_LIBRARY_PATH= ## see installation of hdph-mpi-allgather-0.0.2
+## Test launch
 mpiexec -n 3 .cabal-sandbox/bin/hello
