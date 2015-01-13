@@ -6,6 +6,7 @@
 module Control.Parallel.HdpH.Conf
   ( -- * HdpH runtime system configuration parameters
     RTSConf(..),
+    StartupBackend(..),
     defaultRTSConf,      -- :: RTSConf
 
     -- * reading and updating HdpH RTS config parameters
@@ -25,11 +26,11 @@ import GHC.Conc (getNumCapabilities)
 import qualified Network.BSD (getHostName)
 import qualified System.Posix.Process (getProcessID)
 import Text.ParserCombinators.ReadP
-       (ReadP, readP_to_S, (<++), pfail, eof, skipSpaces, string, munch,
+       (ReadP, readP_to_S, (<++), (+++), pfail, eof, skipSpaces, string, munch,
         between, sepBy, many, option, optional)
+import Network.Socket (HostName, ServiceName)
 
 import Control.Parallel.HdpH.Internal.Location (dbgNone)
-
 
 -----------------------------------------------------------------------------
 -- Runtime configuration parameters (for RTS monad stack)
@@ -113,31 +114,45 @@ data RTSConf =
         -- ^ Name of configuration file, or empty string.
         -- Default is empty string (corresponding to no configuration file).
 
-    path :: [String]
+    path :: [String],
         -- ^ Path from root of network topology to this node.
         -- Default is empty list (corresponding to the trivial topology).
+
+    startupBackend :: StartupBackend,
+        -- ^ Which backend we want to use for Node discovery.
+
+    startupHost :: HostName,
+        -- ^ TCP node discovery: Which address should nodes look for to.
+
+    startupPort :: ServiceName
+        -- ^ TCP node discovery: Which port should nodes look for to.
     }
     deriving (Show)  -- for testing
-
 
 -- | Default runtime system configuration parameters.
 defaultRTSConf :: RTSConf
 defaultRTSConf =
   RTSConf {
-    debugLvl   = dbgNone,  -- no debug information
-    scheds     = 1,        -- only 1 scheduler by default
-    wakeupDly  = 1000,     -- wake up one sleeping scheduler every millisecond
-    maxHops    = 3,        -- no more than 3 hops per FISH
-    maxFish    = 1,        -- send FISH when <= 1 spark in pool
-    minSched   = 2,        -- reply with SCHEDULE when >= 2 sparks in pool
-    minFishDly = 10000,    -- delay at least 10 milliseconds after failed FISH
-    maxFishDly = 1000000,  -- delay up to 1 second after failed FISH
-    numProcs   = 0,        -- override this default for UDP node discovery
-    numConns   = -1,       -- default: cache all TCP connections
-    interface  = "eth0",   -- default network interface: 1st Ethernet adapter
-    confFile   = "",       -- default config file: none
-    path       = [] }      -- default path: empty list = no path
+    debugLvl       = dbgNone,  -- no debug information
+    scheds         = 1,        -- only 1 scheduler by default
+    wakeupDly      = 1000,     -- wake up one sleeping scheduler every millisecond
+    maxHops        = 3,        -- no more than 3 hops per FISH
+    maxFish        = 1,        -- send FISH when <= 1 spark in pool
+    minSched       = 2,        -- reply with SCHEDULE when >= 2 sparks in pool
+    minFishDly     = 10000,    -- delay at least 10 milliseconds after failed FISH
+    maxFishDly     = 1000000,  -- delay up to 1 second after failed FISH
+    numProcs       = 0,        -- override this default for UDP node discovery
+    numConns       = -1,       -- default: cache all TCP connections
+    interface      = "eth0",   -- default network interface: 1st Ethernet adapter
+    confFile       = "",       -- default config file: none
+    path           = [],       -- default path: empty list = no path
+    startupBackend = UDP,      -- default to udp discovery since this doesn't need extra params
+    startupHost    = "",
+    startupPort    = ""
+    }
 
+-- StartupBackends
+data StartupBackend = TCP | UDP deriving (Show)
 
 -----------------------------------------------------------------------------
 -- parsing configuration parameters
@@ -236,8 +251,13 @@ parseConfEntry hostname pid caps conf =
        return conf { confFile = w })
   <++ (string "path" >> skipEqual >> parsePath >>= \ p -> eof >>
        return conf { path = expandPath hostname pid p })
+  <++ (string "startupBackend" >> skipEqual >> parseBackend >>= \b -> eof >>
+       return conf { startupBackend = b })
+  <++ (string "startupHost" >> skipEqual >> parseWord >>= \h -> eof >>
+       return conf { startupHost = h })
+  <++ (string "startupPort" >> skipEqual >> parseWord >>= \p -> eof >>
+       return conf { startupPort = p })
   <++ pfail
-
 
 -- consume a single equals sign, including surrounding space
 skipEqual :: ReadP ()
@@ -286,6 +306,10 @@ expandPath :: String -> String -> [String] -> [String]
 expandPath hostname pid =
   map (replace "%HOSTNAME" hostname . replace "%PID" pid)
 
+parseBackend :: ReadP StartupBackend
+parseBackend = parseUDP +++ parseTCP
+  where parseUDP = string "udp" +++ string "UDP" >> return UDP
+        parseTCP = string "tcp" +++ string "TCP" >> return TCP
 
 -----------------------------------------------------------------------------
 -- parsing configuration file
