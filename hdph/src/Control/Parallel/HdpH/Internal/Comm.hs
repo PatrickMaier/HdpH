@@ -243,7 +243,7 @@ withCommDo conf0 action = do
           let backend = startupBackend cfg
           case backend of
             UDP -> startupUDP (numProcs cfg) thisNode >>= return . map decodeNode
-            TCP -> startupTCP >>= return . map decodeNode
+            TCP -> startupTCP cfg >>= return . map decodeNode
 
 -- Return the IP address associated with the interface named in RTS config.
 discoverMyIP :: RTSConf -> IO IPv4
