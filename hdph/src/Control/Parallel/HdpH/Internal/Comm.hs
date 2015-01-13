@@ -49,7 +49,7 @@ import Network.Info (IPv4, ipv4, name, getNetworkInterfaces)
 import qualified Network.Transport as NT
 import qualified Network.Transport.TCP as TCP
 
-import Control.Parallel.HdpH.Conf (RTSConf(..))
+import Control.Parallel.HdpH.Conf (RTSConf(..), StartupBackend(..))
 import Control.Parallel.HdpH.Dist (zero)
 import Control.Parallel.HdpH.Internal.Location 
        (Node, address, mkNode, debug, dbgNone, dbgFailure, dbgMsgRcvd)
@@ -67,9 +67,11 @@ import Control.Parallel.HdpH.Internal.State.Comm (stateRef)
 import Control.Parallel.HdpH.Internal.CommStartupMPI
        (defaultAllgatherByteStrings)
 #elif defined(STARTUP_UDP)
-import Control.Parallel.HdpH.Internal.CommStartupUDP
-       (defaultAllgatherByteStrings)
+import Control.Parallel.HdpH.Internal.CommStartupUDP (defaultAllgatherByteStrings)
 #endif
+import Control.Parallel.HdpH.Internal.CommStartupUDP (startupUDP)
+import Control.Parallel.HdpH.Internal.CommStartupTCP (startupTCP)
+
 import Control.Parallel.HdpH.Internal.Misc (shuffle)
 
 --import System.IO (hPutStrLn, hFlush, stderr)  -- DEBUG
@@ -194,9 +196,7 @@ withCommDo conf0 action = do
 --  hPutStrLn stderr ("DEBUG.withCommDo.2: " ++ show me ++ ", numProcs=" ++ show (numProcs conf0)) >> hFlush stderr
 
   (do
-    -- all-to-all exchange nodes (via MPI or UDP); synchronises all nodes
-    universe <- map decodeNode <$>
-                  defaultAllgatherByteStrings (numProcs conf0) me_enc
+    universe <- doStartup conf0 me_enc
     when (null universe) $
       error $ thisModule ++ ".withCommDo: node discovery failed"
 
@@ -239,7 +239,11 @@ withCommDo conf0 action = do
     -- shutdown
     `finally` killThread listener_tid
     -- TODO: reset state and free resources to reflect shutdown of comms layer
-
+  where doStartup cfg thisNode = do
+          let backend = startupBackend cfg
+          case backend of
+            UDP -> startupUDP (numProcs cfg) thisNode >>= return . map decodeNode
+            TCP -> startupTCP >>= return . map decodeNode
 
 -- Return the IP address associated with the interface named in RTS config.
 discoverMyIP :: RTSConf -> IO IPv4

@@ -12,6 +12,8 @@
 
 module Control.Parallel.HdpH.Internal.CommStartupUDP
   ( -- * all-to-all synchronisation by exchanging bytestrings
+    startupUDP,
+
     allgatherByteStrings,
     defaultAllgatherByteStrings,
     defaultMaxSize,
@@ -29,6 +31,11 @@ import Network.Multicast (multicastSender, multicastReceiver)
 import Network.Socket.ByteString (sendTo, recvFrom)
 import System.Timeout (timeout)
 
+-- | Find the universe of all nodes via UDP broacast.
+--   Note: Will only work if all nodes are within a single subnet due to UDP
+--   broadcast limitations.
+startupUDP :: Int -> ByteString -> IO [ByteString]
+startupUDP = defaultAllgatherByteStrings
 
 -- fixed host name and port number used for UDP broadcast
 host :: String
