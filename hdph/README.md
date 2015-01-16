@@ -41,8 +41,8 @@ following configuration options are set:
 
 + numProcs
 + startupBackend=TCP
-+ startupHost=<rootNodeHost>
-+ startupPort=<rootNodePort>
++ startupHost=(rootNodeHost)
++ startupPort=(rootNodePort)
 
 Like with the UDP backend there are a few limitations to this approach:
 
