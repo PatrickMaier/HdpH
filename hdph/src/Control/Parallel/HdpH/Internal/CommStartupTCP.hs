@@ -23,6 +23,9 @@ import System.Timeout (timeout)
 
 import Control.Parallel.HdpH.Conf (RTSConf(..))
 
+-- | Use the TCP startupBackend to discover all nodes in the system. Should be
+-- provided with a RTSConf with the startupHost and startupPort parameters
+-- set. The Bytestring should be the encoding of the calling node.
 startupTCP :: RTSConf -> ByteString -> IO [ByteString]
 startupTCP conf meEnc = let valid = validateConf in
                         if valid then startupTCP' conf meEnc else reportError
@@ -31,7 +34,7 @@ startupTCP conf meEnc = let valid = validateConf in
                                \ You must specify the optons \"startupHost\"\
                                \ and \"startupPort\" to use the TCP startup backend."
 
--- TODO: More robust error handling.
+-- Internal main startupTCP method
 startupTCP' :: RTSConf -> ByteString -> IO [ByteString]
 startupTCP' conf nodeEnc = do hn <- getHostName
                               if hn /= startupHost conf then sendDetails else handleStartupRootNode
@@ -43,11 +46,13 @@ startupTCP' conf nodeEnc = do hn <- getHostName
         Nothing -> sendDetails
         Just s  -> rootProcStartup s
 
+    -- TODO: Should check all the addresses returned by getAddrInfo
     tryBind = do (hostAddr:_) <- getAddrInfo (Just (defaultHints {addrFamily = AF_INET})) (Just (startupHost conf)) (Just (startupPort conf))
                  s <- socket AF_INET Stream defaultProtocol
                  (bindSocket s (addrAddress hostAddr) >> return (Just s)) `catchIOError` (\_ -> return Nothing)
 
-    -- Start the root node listening and wait to receive 'numProc' bytestrings (or timeout).
+    -- Start the root node listening, wait to receive 'numProc' bytestrings (or timeout) and then broadcast
+    -- the universe to all nodes
     rootProcStartup s = do
       let numproc = numProcs conf
       listen s numproc
@@ -57,6 +62,8 @@ startupTCP' conf nodeEnc = do hn <- getHostName
                           \ Failed to receive messages from all nodes."
         Just uni -> broadcastUniverse uni >> return (map snd uni)
 
+    -- Send node information back to the 'slave' nodes using their connection
+    -- handles.
     broadcastUniverse universe = do
         let otherNodes = tail universe
             rootNodeH  = fst (head universe)
@@ -66,9 +73,11 @@ startupTCP' conf nodeEnc = do hn <- getHostName
 
         hClose rootNodeH
 
-    -- Non root nodes attempt to send data
+    -- 'slave' nodes connect, send their bytestring and then wait for the
+    -- universe details to be sent to them.
     sendDetails = withSocketsDo $ do
 
+      -- TODO: Should check all the addresses returned from getAddrInfo
       (rootAddr:_) <- getAddrInfo (Just (defaultHints {addrFamily = AF_INET})) (Just (startupHost conf)) (Just (startupPort conf))
       s <- socket (addrFamily rootAddr) Stream defaultProtocol
 
