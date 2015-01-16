@@ -18,6 +18,9 @@ factors out the closure representation of HdpH.
 Building HdpH with MPI node discovery
 -------------------------------------
 
+**Note: This feature will be removed in a future release due to the inclusion
+of a TCP node discovery system.**
+
 Requires `hdph-closure` and `hdph-mpi-allgather`. Installation instructions
 for the latter depend on the MPI library against which it is linked, see
 `README` of package `hdph-mpi-allgather`.
@@ -25,6 +28,34 @@ for the latter depend on the MPI library against which it is linked, see
 Once the dependencies have been installed, install `hdph` by passing
 `--flags=WithMPI` to the cabal installer.
 
+Using TCP node discovery
+------------------------
+
+To remove the need for the additional dependency on MPI HdpH now comes equipped
+with a TCP based node discovery system. This works by having the user select a
+*startupRoot* node which gathers the node information from all nodes and then
+broadcasts this information to all participating nodes.
+
+It is possible to use this startupBackend out of the box by ensuring the
+following configuration options are set:
+
++ numProcs
++ startupBackend=TCP
++ startupHost=<rootNodeHost>
++ startupPort=<rootNodePort>
+
+Like with the UDP backend there are a few limitations to this approach:
+
++ You need to know the number of processes ahead of time.
+
++ Startup will time out after a period of time (10 seconds). All nodes must
+  have both connected to the root and received all other node information
+  within this time.
+
++ Starting a second set of processes with the same startupHost/startupPort
+  combination will likely confuse the startup sequence. It should be possible
+  to start a second set of processes if you ensure this host/port combination
+  differ.
 
 Running HdpH
 ------------
