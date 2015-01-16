@@ -9,6 +9,8 @@ module Control.Parallel.HdpH.Internal.CommStartupTCP
   ( startupTCP ) where
 
 import Control.Monad (forM_, replicateM)
+import Control.Concurrent (threadDelay)
+
 import Data.ByteString (ByteString, hGetLine)
 import Data.ByteString.Char8 (hPutStrLn)
 
@@ -70,7 +72,10 @@ startupTCP' conf nodeEnc = do hn <- getHostName
       (rootAddr:_) <- getAddrInfo (Just (defaultHints {addrFamily = AF_INET})) (Just (startupHost conf)) (Just (startupPort conf))
       s <- socket (addrFamily rootAddr) Stream defaultProtocol
 
-      connSuc <- defaultTimeOut $ connect s (addrAddress rootAddr)
+      connSuc <- defaultTimeOut $ let retry = connect s (addrAddress rootAddr)
+                                              `catchIOError`
+                                              (\_ -> threadDelay 1000 >> retry)
+                                  in retry
       case connSuc of
         Nothing  -> error "Control.Parallel.HdpH.Internal.CommStartupTCP.rootProcStartup:\
                           \ Failed to connect to root node."
