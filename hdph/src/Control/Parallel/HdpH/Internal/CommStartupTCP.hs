@@ -68,7 +68,7 @@ startupTCP' conf nodeEnc = do hn <- getHostName
     rootProcStartup s = do
       let numproc = numProcs conf
       listen s numproc
-      universe <- recvNByteStrings s numproc nodeEnc
+      universe <- recvNByteStrings conf s numproc nodeEnc
       case universe of
         Nothing  -> moduleError "rootProcStartup"
                                 "Failed to recieve messages from all nodes."
@@ -98,7 +98,7 @@ startupTCP' conf nodeEnc = do hn <- getHostName
                       (Just (startupPort conf))
       s <- socket (addrFamily rootAddr) Stream defaultProtocol
 
-      connSuc <- defaultTimeOut $ let retry = connect s (addrAddress rootAddr)
+      connSuc <- timeOut conf $ let retry = connect s (addrAddress rootAddr)
                                               `catchIOError`
                                               (\_ -> threadDelay 1000 >> retry)
                                   in retry
@@ -109,14 +109,18 @@ startupTCP' conf nodeEnc = do hn <- getHostName
       h <- socketToHandle s ReadWriteMode
       hPutStrLn h nodeEnc
 
-      universe <- recvNodeDetails h (numProcs conf)
+      universe <- recvNodeDetails conf h (numProcs conf)
       case universe of
         Nothing  -> moduleError "sendDetails" "Failed to receive from root node."
         Just uni -> hClose h >> return uni
 
 -- Handle the connections (sequentially, could also be done in parallel).
-recvNByteStrings :: Socket -> Int -> ByteString -> IO (Maybe [(Handle,ByteString)])
-recvNByteStrings s numprocs meEnc = defaultTimeOut $ go 1 []
+recvNByteStrings :: RTSConf
+                 -> Socket
+                 -> Int
+                 -> ByteString
+                 -> IO (Maybe [(Handle,ByteString)])
+recvNByteStrings conf s numprocs meEnc = timeOut conf $ go 1 []
   where go i nodes
           | i == numprocs = do
             meH <- socketToHandle s ReadWriteMode
@@ -129,13 +133,13 @@ recvNByteStrings s numprocs meEnc = defaultTimeOut $ go 1 []
 
 
 -- Receive Bytestrings for all other processes.
-recvNodeDetails :: Handle -> Int -> IO (Maybe [ByteString])
-recvNodeDetails h numprocs = defaultTimeOut $ replicateM numprocs (hGetLine h)
+recvNodeDetails :: RTSConf -> Handle -> Int -> IO (Maybe [ByteString])
+recvNodeDetails cfg h numprocs = timeOut cfg $ replicateM numprocs (hGetLine h)
 
 -- 10 seconds default timeout
-defaultTimeOut :: IO a -> IO (Maybe a)
-defaultTimeOut = let defaultTimeoutSec = 10
-                 in timeout (1000000 * defaultTimeoutSec)
+timeOut :: RTSConf -> IO a -> IO (Maybe a)
+timeOut cfg = let t = startupTimeout cfg
+              in timeout (1000000 * t)
 
 -- Print an error message from this module
 -- Params: fn = function name

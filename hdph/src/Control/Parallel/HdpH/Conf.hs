@@ -124,8 +124,12 @@ data RTSConf =
     startupHost :: HostName,
         -- ^ TCP node discovery: Which address should nodes look for to.
 
-    startupPort :: ServiceName
+    startupPort :: ServiceName,
         -- ^ TCP node discovery: Which port should nodes look for to.
+
+    startupTimeout :: Int
+        -- ^ Timeout (in seconds) for the TCP node discovery to trigger an
+        -- error.
     }
     deriving (Show)  -- for testing
 
@@ -148,7 +152,8 @@ defaultRTSConf =
     path           = [],       -- default path: empty list = no path
     startupBackend = UDP,      -- default to udp discovery since this doesn't need extra params
     startupHost    = "",
-    startupPort    = ""
+    startupPort    = "",
+    startupTimeout = 10        -- default (TCP) startup timeout
     }
 
 -- StartupBackends
@@ -257,6 +262,8 @@ parseConfEntry hostname pid caps conf =
        return conf { startupHost = h })
   <++ (string "startupPort" >> skipEqual >> parseWord >>= \p -> eof >>
        return conf { startupPort = p })
+  <++ (string "startupTimeout" >> skipEqual >> parseInt >>= \t -> eof >>
+         return conf { startupTimeout = t })
   <++ pfail
 
 -- consume a single equals sign, including surrounding space
