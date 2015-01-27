@@ -32,6 +32,7 @@ import Control.Applicative (Applicative)
 import Control.Concurrent (ThreadId, forkIO, killThread)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar, tryPutMVar)
 import Control.Monad (unless, when, void)
+import qualified Data.ByteString.Lazy as BS
 import Data.Functor ((<$>))
 
 import Control.Parallel.HdpH.Closure (unClosure)
@@ -57,6 +58,7 @@ import qualified Control.Parallel.HdpH.Internal.Threadpool as Threadpool
        (run, liftSparkM, liftIO)
 import Control.Parallel.HdpH.Internal.Type.Par
        (ParM, unPar, Thread(Atom), ThreadCont(ThreadCont, ThreadDone), Spark)
+
 
 
 -----------------------------------------------------------------------------
@@ -265,8 +267,8 @@ sendPUSH spark target = do
     else do
       -- construct and send PUSH message
       let msg = PUSH spark :: Msg RTS
-      debug dbgMsgSend $
-        show msg ++ " ->> " ++ show target
+      debug dbgMsgSend $ let msg_size = BS.length (encodeLazy msg) in
+        show msg ++ " ->> " ++ show target ++ " Length: " ++ (show msg_size)
       liftIO $ Comm.send target $ encodeLazy msg
 
 
