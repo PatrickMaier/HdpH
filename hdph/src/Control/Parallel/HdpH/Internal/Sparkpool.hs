@@ -45,6 +45,7 @@ import Control.DeepSeq (NFData, rnf)
 import Control.Monad (when, replicateM_, void)
 import Control.Monad.Reader (ReaderT, runReaderT, ask)
 import Control.Monad.Trans (lift)
+import qualified Data.ByteString.Lazy as BS
 import Data.Functor ((<$>))
 import Data.IORef (IORef, newIORef, readIORef, writeIORef, atomicModifyIORef)
 import Data.List (insertBy, sortBy)
@@ -73,6 +74,7 @@ import qualified Control.Parallel.HdpH.Internal.Location as Location (debug)
 import Control.Parallel.HdpH.Internal.Topology (dist)
 import Control.Parallel.HdpH.Internal.Misc (encodeLazy, ActionServer, reqAction)
 import Control.Parallel.HdpH.Internal.Type.Par (Spark)
+
 
 
 -----------------------------------------------------------------------------
@@ -506,10 +508,10 @@ sendFISH r_min = do
                   cand:cands -> (cand, FISH thief [] cands [] True)
                   []         -> (thief, NOWORK)  -- no candidates --> NOWORK
       -- send FISH (or NOWORK) message
-      debug dbgMsgSend $
-        show msg ++ " ->> " ++ show target
+      debug dbgMsgSend $ let msg_size = BS.length (encodeLazy msg) in
+        show msg ++ " ->> " ++ show target ++ " Length: " ++ show msg_size
       liftIO $ Comm.send target $ encodeLazy msg
-      case msg of                       
+      case msg of
         FISH _ _ _ _ _ -> getFishSentCtr >>= incCtr  -- update stats
         _              -> return ()
 
@@ -541,17 +543,17 @@ handleFISH msg@(FISH thief _avoid _candidates _sources _fwd) = do
   maybe_spark <- selectRemoteSpark 0 (dist thief me)
   case maybe_spark of
     Just (spark, r) -> do -- compose and send SCHEDULE
-                          let msg' = SCHEDULE spark r me
-                          debug dbgMsgSend $
-                            show msg' ++ " ->> " ++ show thief
-                          liftIO $ Comm.send thief $ encodeLazy msg'
+      let msg' = SCHEDULE spark r me
+      debug dbgMsgSend $ let msg_size = BS.length (encodeLazy msg) in
+        show msg' ++ " ->> " ++ show thief ++ " Length: " ++ show msg_size
+      liftIO $ Comm.send thief $ encodeLazy msg'
     Nothing -> do
       maybe_src <- readSparkOrigHist
       -- compose FISH message to forward
       let (target, msg') = forwardFISH me maybe_src msg
       -- send message
-      debug dbgMsgSend $
-        show msg' ++ " ->> " ++ show target
+      debug dbgMsgSend $ let msg_size = BS.length (encodeLazy msg) in
+        show msg' ++ " ->> " ++ show target ++ " Length: " ++ show msg_size
       liftIO $ Comm.send target $ encodeLazy msg'
 handleFISH _ = error "panic in handleFISH: not a FISH message"
 
