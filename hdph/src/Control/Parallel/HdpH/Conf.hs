@@ -118,6 +118,8 @@ data RTSConf =
         -- ^ Path from root of network topology to this node.
         -- Default is empty list (corresponding to the trivial topology).
 
+    -- Startup Options
+
     startupBackend :: StartupBackend,
         -- ^ Which backend we want to use for Node discovery.
 
@@ -127,9 +129,17 @@ data RTSConf =
     startupPort :: ServiceName,
         -- ^ TCP node discovery: Which port should nodes look for to.
 
-    startupTimeout :: Int
+    startupTimeout :: Int,
         -- ^ Timeout (in seconds) for the TCP node discovery to trigger an
         -- error.
+
+    -- Optimisation Options
+
+    useLastStealLocationOptmisation :: Bool
+        -- ^ Should HdpH track the location of the last sucessful steal and
+        -- use this as the first steal candidate as it is likely to be a source
+        -- of work.
+
     }
     deriving (Show)  -- for testing
 
@@ -153,7 +163,8 @@ defaultRTSConf =
     startupBackend = UDP,      -- default to udp discovery since this doesn't need extra params
     startupHost    = "",
     startupPort    = "",
-    startupTimeout = 10        -- default (TCP) startup timeout
+    startupTimeout = 10,        -- default (TCP) startup timeout
+    useLastStealLocationOptmisation = True -- Optimisations on by default.
     }
 
 -- StartupBackends
@@ -264,6 +275,8 @@ parseConfEntry hostname pid caps conf =
        return conf { startupPort = p })
   <++ (string "startupTimeout" >> skipEqual >> parseInt >>= \t -> eof >>
          return conf { startupTimeout = t })
+  <++ (string "useLastStealOptmisation" >> skipEqual >> parseBool >>= \b -> eof >>
+         return conf { useLastStealLocationOptmisation = b })
   <++ pfail
 
 -- consume a single equals sign, including surrounding space
@@ -296,8 +309,17 @@ parseInt = do
 parseWord :: ReadP String
 parseWord = do
   word <- munch (not . isSpace)
-  skipSpaces 
+  skipSpaces
   return word
+
+-- Parse a boolean value; Consume trailing spaces.
+parseBool :: ReadP Bool
+parseBool = do
+    v <- parseTrue +++ parseFalse
+    skipSpaces
+    return v
+  where parseTrue  = string "true"  +++ string "TRUE"  >> return True
+        parseFalse = string "false" +++ string "FALSE" >> return True
 
 -- parse and return an absolute path, ie. a list of strings separated by
 -- forward slashes (and without spaces); consume trailing space
