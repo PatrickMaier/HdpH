@@ -56,7 +56,13 @@ import Data.Word (Word8)
 import System.Random (randomRIO)
 
 import Control.Parallel.HdpH.Conf
-       (RTSConf(maxHops, maxFish, minSched, minFishDly, maxFishDly))
+       (RTSConf( maxHops
+               , maxFish
+               , minSched
+               , minFishDly
+               , maxFishDly
+               , useLastStealOptimisation))
+
 import Control.Parallel.HdpH.Dist (Dist, zero, one, mul2, div2)
 import qualified Control.Parallel.HdpH.Internal.Comm as Comm
        (send, nodes, myNode, equiDistBases)
@@ -498,7 +504,12 @@ sendFISH r_min = do
       thief <- liftIO $ Comm.myNode
       max_hops <- getMaxHops
       candidates <- liftIO $ randomCandidates max_hops
-      maybe_src <- readSparkOrigHist
+
+      useLastSteal <- useLastStealOptimisation <$> s_conf <$> ask
+      maybe_src <- if useLastSteal
+                    then readSparkOrigHist
+                    else return Nothing
+
       -- compose FISH message
       let (target, msg) =
             case maybe_src of

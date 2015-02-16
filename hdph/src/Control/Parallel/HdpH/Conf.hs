@@ -135,7 +135,7 @@ data RTSConf =
 
     -- Optimisation Options
 
-    useLastStealLocationOptmisation :: Bool
+    useLastStealOptimisation :: Bool
         -- ^ Should HdpH track the location of the last sucessful steal and
         -- use this as the first steal candidate as it is likely to be a source
         -- of work.
@@ -164,7 +164,7 @@ defaultRTSConf =
     startupHost    = "",
     startupPort    = "",
     startupTimeout = 10,        -- default (TCP) startup timeout
-    useLastStealLocationOptmisation = True -- Optimisations on by default.
+    useLastStealOptimisation = True -- Optimisations on by default.
     }
 
 -- StartupBackends
@@ -275,8 +275,8 @@ parseConfEntry hostname pid caps conf =
        return conf { startupPort = p })
   <++ (string "startupTimeout" >> skipEqual >> parseInt >>= \t -> eof >>
          return conf { startupTimeout = t })
-  <++ (string "useLastStealOptmisation" >> skipEqual >> parseBool >>= \b -> eof >>
-         return conf { useLastStealLocationOptmisation = b })
+  <++ (string "useLastStealOptimisation" >> skipEqual >> parseBool >>= \b -> eof >>
+         return conf { useLastStealOptimisation = b })
   <++ pfail
 
 -- consume a single equals sign, including surrounding space
@@ -319,7 +319,7 @@ parseBool = do
     skipSpaces
     return v
   where parseTrue  = string "true"  +++ string "TRUE"  >> return True
-        parseFalse = string "false" +++ string "FALSE" >> return True
+        parseFalse = string "false" +++ string "FALSE" >> return False
 
 -- parse and return an absolute path, ie. a list of strings separated by
 -- forward slashes (and without spaces); consume trailing space
