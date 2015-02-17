@@ -61,7 +61,8 @@ import Control.Parallel.HdpH.Conf
                , minSched
                , minFishDly
                , maxFishDly
-               , useLastStealOptimisation))
+               , useLastStealOptimisation
+               , useLowWatermarkOptimisation))
 
 import Control.Parallel.HdpH.Dist (Dist, zero, one, mul2, div2)
 import qualified Control.Parallel.HdpH.Internal.Comm as Comm
@@ -317,13 +318,18 @@ getLocalSpark schedID = do
   r_min <- liftIO getMinDistIO
   maybe_spark <- selectLocalSpark schedID r_min
   case maybe_spark of
-    Nothing         -> do sendFISH zero
-                          return Nothing
-    Just (spark, r) -> do sendFISH r
-                          getSparkConvCtr >>= incCtr
-                          debug dbgSpark $
-                            "(spark converted)"
-                          return $ Just spark
+    Nothing         -> do
+      sendFISH zero
+      return Nothing
+    Just (spark, r) -> do
+      useLowWatermark <- useLowWatermarkOptimisation <$> s_conf <$> ask
+      when useLowWatermark $ sendFISH r
+
+      getSparkConvCtr >>= incCtr
+      debug dbgSpark $
+        "(spark converted)"
+
+      return $ Just spark
 
 
 -- Put a new spark at the back of the spark pool at radius 'r', wake up
