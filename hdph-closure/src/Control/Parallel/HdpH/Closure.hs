@@ -47,6 +47,7 @@ module Control.Parallel.HdpH.Closure
 
     -- ** Categorical operations on function Closures
     -- | A /function Closure/ is a Closure of type @'Closure' (a -> b)@.
+    unitC,
     idC,
     termC,
     compC,
@@ -606,6 +607,15 @@ forceClosure clo = x `deepseq` toClosure x where x = unClosure clo
 ------------------------------------------------------------------------------
 -- Categorical operations on function Closures
 
+-- | Unit Closure.
+unitC :: Closure ()
+unitC = $(mkClosure [| unit |])
+
+{-# INLINE unit #-}
+unit :: ()
+unit = ()
+
+
 -- | Identity arrow wrapped in a Closure.
 idC :: Closure (a -> a)
 idC = $(mkClosure [| id |])
@@ -654,7 +664,8 @@ instance ToClosure (Maybe (Closure a)) where locToClosure = $(here)
 
 declareStatic :: StaticDecl
 declareStatic = mconcat
-  [declare $(static 'id),
+  [declare $(static 'unit),
+   declare $(static 'id),
    declare $(static 'constUnit),
    declare $(static 'compC_abs),
    declare $(static 'apC_abs),
