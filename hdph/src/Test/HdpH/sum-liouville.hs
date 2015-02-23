@@ -46,13 +46,15 @@ instance ForceCC Integer where locForceCC = $(here)
 sumLiouvilleHdpH2Level :: Integer ->  Int -> Par Integer
 sumLiouvilleHdpH2Level n chunkSize = do
   let cs = map toClosure (chunkedList n chunkSize)
-  rs <- parMapM2Level one $(mkClosure [|sumLEvalChunkPar|]) cs
+  cs' <- io $ runRVar (shuffle cs) DevURandom --Shuffle for better distribution
+  rs <- parMapM2Level one $(mkClosure [|sumLEvalChunkPar|]) cs'
   force $ sum (map unClosure rs)
 
 sumLiouvilleHdpH2LevelRelaxed :: Integer ->  Int -> Par Integer
 sumLiouvilleHdpH2LevelRelaxed n chunkSize = do
   let cs = map toClosure (chunkedList n chunkSize)
-  rs <- parMapM2LevelRelaxed one $(mkClosure [|sumLEvalChunkPar|]) cs
+  cs' <- io $ runRVar (shuffle cs) DevURandom --Shuffle for better distribution
+  rs <- parMapM2LevelRelaxed one $(mkClosure [|sumLEvalChunkPar|]) cs'
   force $ sum (map unClosure rs)
 
 sumLEvalChunkPar :: (Integer, Integer) -> Par (Closure Integer)
@@ -65,7 +67,8 @@ sumLEvalChunkPar bnds = do
 sumLiouvilleHdpHPushN :: Integer -> Int -> Int -> Par Integer
 sumLiouvilleHdpHPushN n chunkSize pushCount = do
   let cs = map toClosure (chunkedList n chunkSize)
-  rs <- pushToN one pushCount $(mkClosure [|sumLEvalChunkPar|]) cs
+  cs' <- io $ runRVar (shuffle cs) DevURandom --Shuffle for better distribution
+  rs <- pushToN one pushCount $(mkClosure [|sumLEvalChunkPar|]) cs'
   force $ sum (map unClosure rs)
 
 pushToN :: Dist                            -- bounding radius
