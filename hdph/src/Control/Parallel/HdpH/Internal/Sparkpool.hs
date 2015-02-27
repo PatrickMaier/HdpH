@@ -153,7 +153,12 @@ getSparkOrigHist :: SparkM m (IORef (Maybe Node))
 getSparkOrigHist = s_sparkOrig <$> ask
 
 readSparkOrigHist :: SparkM m (Maybe Node)
-readSparkOrigHist = getSparkOrigHist >>= liftIO . readIORef
+readSparkOrigHist = do
+  useLastSteal <- useLastStealOptimisation <$> s_conf <$> ask
+  if useLastSteal
+   then getSparkOrigHist >>= liftIO . readIORef
+   else return Nothing
+
 
 setSparkOrigHist :: Node -> SparkM m ()
 setSparkOrigHist mostRecentOrigin = do
@@ -511,10 +516,7 @@ sendFISH r_min = do
       max_hops <- getMaxHops
       candidates <- liftIO $ randomCandidates max_hops
 
-      useLastSteal <- useLastStealOptimisation <$> s_conf <$> ask
-      maybe_src <- if useLastSteal
-                    then readSparkOrigHist
-                    else return Nothing
+      maybe_src <- readSparkOrigHist
 
       -- compose FISH message
       let (target, msg) =
