@@ -560,18 +560,18 @@ handleFISH msg@(FISH thief _avoid _candidates _sources _fwd) = do
   maybe_spark <- selectRemoteSpark 0 (dist thief me)
   case maybe_spark of
     Just (spark, r) -> do -- compose and send SCHEDULE
-      let msg' = SCHEDULE spark r me
-      debug dbgMsgSend $ let msg_size = BS.length (encodeLazy msg) in
-        show msg' ++ " ->> " ++ show thief ++ " Length: " ++ show msg_size
-      liftIO $ Comm.send thief $ encodeLazy msg'
+      let scheduleMsg = SCHEDULE spark r me
+      debug dbgMsgSend $ let msg_size = BS.length (encodeLazy scheduleMsg) in
+        show scheduleMsg ++ " ->> " ++ show thief ++ " Length: " ++ show msg_size
+      liftIO $ Comm.send thief $ encodeLazy scheduleMsg
     Nothing -> do
       maybe_src <- readSparkOrigHist
       -- compose FISH message to forward
-      let (target, msg') = forwardFISH me maybe_src msg
+      let (target, forwardMsg) = forwardFISH me maybe_src msg
       -- send message
-      debug dbgMsgSend $ let msg_size = BS.length (encodeLazy msg) in
-        show msg' ++ " ->> " ++ show target ++ " Length: " ++ show msg_size
-      liftIO $ Comm.send target $ encodeLazy msg'
+      debug dbgMsgSend $ let msg_size = BS.length (encodeLazy forwardMsg) in
+        show forwardMsg ++ " ->> " ++ show target ++ " Length: " ++ show msg_size
+      liftIO $ Comm.send target $ encodeLazy forwardMsg
 handleFISH _ = error "panic in handleFISH: not a FISH message"
 
 -- Auxiliary function, called by 'handleFISH' when there is nought to schedule.
