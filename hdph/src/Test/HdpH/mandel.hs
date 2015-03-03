@@ -183,8 +183,6 @@ declareStatic =
     [HdpH.declareStatic,         -- declare Static deserialisers
      Strategies.declareStatic,   -- from imported modules
      declare (staticToClosure :: StaticToClosure VecTree),
-     declare $(static 'map_f),
-     declare $(static 'reduce_f),
      declare $(static 'mandel)]
 ---------------------------------------------------------------------------
 
