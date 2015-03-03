@@ -108,13 +108,16 @@ monadparRunMandel' minX minY maxX maxY winX winY max_depth threshold =
 -----------------------------------------------
 -- Mandel using the generic HpdH D&C skeleton
 
-mandelHdpHDandC :: Double -> Double -- (minX, MinY)
-                -> Double -> Double -- (maxX, maxY)
-                -> Int -> Int -- (winX, winY)
-                -> Int -- Depth
-                -> Int -- Threshold
-                -> Par VecTree
-mandelHdpHDandC minX minY maxX maxY winX winY maxDepth threshold = do
+hdphDandCMandel :: Int -> Int -> Int -> Int -> Par VecTree
+hdphDandCMandel = hdphDandCMandel' (-2) (-2) 2 2
+
+hdphDandCMandel' :: Double -> Double -- (minX, MinY)
+                 -> Double -> Double -- (maxX, maxY)
+                 -> Int -> Int -- (winX, winY)
+                 -> Int -- Depth
+                 -> Int -- Threshold
+                 -> Par VecTree
+hdphDandCMandel' minX minY maxX maxY winX winY maxDepth threshold = do
   res <- parDivideAndConquer
           $(mkClosure [|dc_trivial threshold|])
           $(mkClosure [|dc_decompose|])
@@ -233,7 +236,7 @@ main = do
                 (monadparRunMandel valX valY valDepth valThreshold))
               printOutput (Just p,t)
       2 -> do res <- timeIOMs $ evaluate =<< runParIO conf
-                                (mandelHdpHDandC (-2) (-2) 2 2 valX valY valDepth valThreshold)
+                                (hdphDandCMandel valX valY valDepth valThreshold)
               printOutput res
       _ -> return ()
 
