@@ -18,7 +18,7 @@ module Main where
 
 import Control.DeepSeq hiding (force)
 import Control.Exception (evaluate)
-import Control.Monad (when, foldM)
+import Control.Monad (when)
 import Control.Parallel.HdpH
 import Control.Parallel.HdpH.Strategies
 import qualified Control.Monad.Par as MonadPar
@@ -34,19 +34,21 @@ import Data.List.Split (splitOn)
 import Data.Maybe (isJust,fromJust)
 import Data.Monoid (mconcat)
 import Data.Serialize
-import Data.Time.Clock (NominalDiffTime, diffUTCTime, getCurrentTime)
 import Data.Typeable (Typeable)
 import Data.Vector.Cereal () -- To get the generic deriving for cereal and vectors.
 import qualified Data.Vector.Unboxed as V
 
 import GHC.Generics (Generic)
 
+import System.Clock
 import System.Environment (getArgs)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 import System.Random (mkStdGen, setStdGen)
 
 
 import Prelude
+
+type MSTime = Double
 
 data VecTree = Leaf (V.Vector Int)
              | MkNode VecTree VecTree
@@ -186,13 +188,18 @@ reduce_f = \a_clo b_clo -> return $ toClosure (MkNode (unClosure a_clo) (unClosu
 -----------------------------------------------------------------------------
 -- initialisation, argument processing and 'main'
 
--- time an IO action
-timeIO :: IO a -> IO (a, NominalDiffTime)
-timeIO action = do t0 <- getCurrentTime
-                   x <- action
-                   t1 <- getCurrentTime
-                   return (x, diffUTCTime t1 t0)
+timeDiffMSecs :: TimeSpec -> TimeSpec -> MSTime
+timeDiffMSecs (TimeSpec s1 n1) (TimeSpec s2 n2) = fromIntegral (t2 - t1)
+                                                          /
+                                                  fromIntegral (10 ^ 6)
+  where t1 = (fromIntegral s1 * 10 ^ 9) + fromIntegral n1
+        t2 = (fromIntegral s2 * 10 ^ 9) + fromIntegral n2
 
+timeIOMs :: IO a -> IO (a, MSTime)
+timeIOMs action = do s  <- getTime Monotonic
+                     x  <- action
+                     e  <- getTime Monotonic
+                     return (x, timeDiffMSecs s e)
 
 -- initialize random number generator
 initrand :: Int -> IO ()
@@ -257,44 +264,17 @@ main = do
   let (version, valX, valY, valDepth,valThreshold,expected) = parseArgs as
   --initrand seed --Figure out if we need this later. Get this from the args?
   case version of
-      -- 0 -> do (pixels, t) <- timeIO $ evaluate =<< runParIO conf
-      --           (dist_skel_par_mandel valX valY valDepth valThreshold)
-      --         if isJust pixels
-      --          then
-      --            putStrLn $
-      --           "{v0} mandel-par " ++
-      --           "X=" ++ show valX ++ " Y=" ++ show valY ++
-      --           " depth=" ++ show valDepth ++ " threshold=" ++ show valThreshold ++
-      --           " checksum=" ++ show (checkSum (fromJust pixels)) ++
-      --           " {runtime=" ++ show t ++ "}"
-      --          else return ()
-      -- 1 -> do (pixels, t) <- timeIO $ evaluate =<< runParIO conf
-      --           (dist_skel_push_mandel valX valY valDepth valThreshold)
-      --         if isJust pixels
-      --          then
-      --            putStrLn $
-      --           "{v1} mandel-push " ++
-      --           "X=" ++ show valX ++ " Y=" ++ show valY ++
-      --           " depth=" ++ show valDepth ++ " threshold=" ++ show valThreshold ++
-      --           " checksum=" ++ show (checkSum (fromJust pixels)) ++
-      --           " {runtime=" ++ show t ++ "}"
-      --          else return ()
-      4 -> do (pixels, t) <- timeIO $ evaluate =<< return (MonadPar.runPar
+      1 -> do (p, t) <- timeIOMs $ evaluate =<< return (MonadPar.runPar
                 (monadparRunMandel valX valY valDepth valThreshold))
-              putStrLn $
-                "{v4} monadpar-mandel-par " ++
-                "X=" ++ show valX ++ " Y=" ++ show valY ++
-                " depth=" ++ show valDepth ++ " threshold=" ++ show valThreshold ++
-                " checksum=" ++ show (checkSum pixels) ++
-                " {runtime=" ++ show t ++ "}"
-      5 -> do (pixels, t) <- timeIO $ evaluate =<< runParIO conf
+              printOutput (Just p,t)
+      2 -> do res <- timeIOMs $ evaluate =<< runParIO conf
                                 (mandelHdpHDandC (-2) (-2) 2 2 valX valY valDepth valThreshold)
-              when (isJust pixels) $
-               putStrLn $
-                "{v4} mandelHdpH " ++
-                "X=" ++ show valX ++ " Y=" ++ show valY ++
-                " depth=" ++ show valDepth ++ " threshold=" ++ show valThreshold ++
-                " checksum=" ++ show (checkSum (fromJust pixels)) ++
-                " {runtime=" ++ show t ++ "}"
+              printOutput res
       _ -> return ()
 
+printOutput :: (Maybe VecTree, MSTime) -> IO ()
+printOutput (p,t) = case p of
+                     Just pixels -> do
+                       putStrLn $ "CHECKSUM: " ++ show (checkSum pixels)
+                       putStrLn $ "RUNTIME: "  ++ show t ++ "ms"
+                     Nothing -> return ()
