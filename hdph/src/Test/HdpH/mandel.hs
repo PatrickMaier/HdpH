@@ -105,7 +105,6 @@ monadparRunMandel' minX minY maxX maxY winX winY max_depth threshold =
     r_scale  =  maxY - minY  :: Double
     c_scale =   maxX - minX  :: Double
 
-
 -----------------------------------------------
 -- Mandel using the generic HpdH D&C skeleton
 
@@ -123,14 +122,6 @@ mandelHdpHDandC minX minY maxX maxY winX winY maxDepth threshold = do
           $(mkClosure [|dc_algorithm (minX, minY, maxX, maxY, winX, winY, maxDepth)|])
           (toClosure (0,winY-1))
   return $ unClosure res
-
-{- parDivideAndConquer :: Closure (Closure a -> Bool)
-                    -> Closure (Closure a -> [Closure a])
-                    -> Closure (Closure a -> [Closure b] -> Closure b)
-                    -> Closure (Closure a -> Par (Closure b))
-                    -> Closure a
-                    -> Par (Closure b)
--}
 
 dc_trivial :: Int -> Thunk (Closure (Int, Int) -> Bool)
 dc_trivial threshold = Thunk $ \bnds -> let (min,max) = unClosure bnds
@@ -153,10 +144,7 @@ dc_algorithm :: (Double, Double, -- (minX, minY)
               -> Thunk (Closure (Int,Int) -> Par (Closure VecTree))
 dc_algorithm (minX, minY, maxX, maxY, winX, winY, maxDepth) = Thunk $ \bnds ->
   let (min,max) = unClosure bnds
-      --y = unClosure y_clo
-      --vec = V.generate winX (\x -> mandelStep y x)
   in  force $ toClosure (Leaf $ foldl go V.empty [min..max])
-  -- seq (vec V.! 0) $ return (toClosure (Leaf vec))
   where
     go a y = a V.++ V.generate winX (\x -> mandelStep y x)
     mandelStep i j = mandel maxDepth (calcZ i j)
@@ -164,26 +152,6 @@ dc_algorithm (minX, minY, maxX, maxY, winX, winY, maxDepth) = Thunk $ \bnds ->
                 ((fromIntegral i * c_scale) / fromIntegral winX + minX)
     r_scale =  maxY - minY  :: Double
     c_scale =  maxX - minX  :: Double
-
-------------------------------------------------
--- Map and Reduce function closure implementations
-
-map_f :: (Double,Double,Double,Double,Int,Int,Int)
-      -> Closure Int
-      -> Par (Closure VecTree)
-map_f (minX,minY,maxX,maxY,winX,winY,maxDepth) = \y_clo -> do
-    let y = unClosure y_clo
-    let vec = V.generate winX (\x -> mandelStep y x)
-    seq (vec V.! 0) $ return (toClosure (Leaf vec))
-  where
-    mandelStep i j = mandel maxDepth (calcZ i j)
-    calcZ i j = ((fromIntegral j * r_scale) / fromIntegral winY + minY) :+
-           ((fromIntegral i * c_scale) / fromIntegral winX + minX)
-    r_scale =  maxY - minY  :: Double
-    c_scale =   maxX - minX  :: Double
-
-reduce_f :: Closure VecTree -> Closure VecTree -> Par (Closure VecTree)
-reduce_f = \a_clo b_clo -> return $ toClosure (MkNode (unClosure a_clo) (unClosure b_clo))
 
 -----------------------------------------------------------------------------
 -- initialisation, argument processing and 'main'
@@ -207,7 +175,6 @@ initrand seed = when (seed /= 0) $ setStdGen (mkStdGen seed)
 
 -----------------------------------------------------
 -- Static Closures
-
 
 $(return []) -- Bring the types into scope so that reify works.
 declareStatic :: StaticDecl
