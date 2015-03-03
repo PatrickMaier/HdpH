@@ -45,7 +45,6 @@ import System.Environment (getArgs)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 import System.Random (mkStdGen, setStdGen)
 
-
 import Prelude
 
 type MSTime = Double
@@ -147,7 +146,9 @@ dc_algorithm :: (Double, Double, -- (minX, minY)
               -> Thunk (Closure (Int,Int) -> Par (Closure VecTree))
 dc_algorithm (minX, minY, maxX, maxY, winX, winY, maxDepth) = Thunk $ \bnds ->
   let (min,max) = unClosure bnds
-  in  force $ toClosure (Leaf $ foldl go V.empty [min..max])
+      v = foldl go V.empty [min..max]
+  in  do vec <- force v
+         return $ toClosure (Leaf vec)
   where
     go a y = a V.++ V.generate winX (\x -> mandelStep y x)
     mandelStep i j = mandel maxDepth (calcZ i j)
@@ -186,6 +187,13 @@ declareStatic =
     [HdpH.declareStatic,         -- declare Static deserialisers
      Strategies.declareStatic,   -- from imported modules
      declare (staticToClosure :: StaticToClosure VecTree),
+     declare (staticToClosure :: StaticToClosure (Int,Int)),
+
+     declare $(static 'dc_trivial),
+     declare $(static 'dc_decompose),
+     declare $(static 'dc_combine),
+     declare $(static 'dc_algorithm),
+
      declare $(static 'mandel)]
 ---------------------------------------------------------------------------
 
