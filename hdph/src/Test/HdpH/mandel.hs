@@ -213,10 +213,6 @@ timeIOMs action = do s  <- getTime Monotonic
                      e  <- getTime Monotonic
                      return (x, timeDiffMSecs s e)
 
--- initialize random number generator
-initrand :: Int -> IO ()
-initrand seed = when (seed /= 0) $ setStdGen (mkStdGen seed)
-
 -----------------------------------------------------
 -- Static Closures
 
@@ -280,7 +276,6 @@ main = do
     Right a  -> return a
 
   let (version, valX, valY, valDepth,valThreshold,expected) = parseArgs as
-  --initrand seed --Figure out if we need this later. Get this from the args?
   case version of
       1 -> do (p, t) <- timeIOMs $ evaluate =<< return (MonadPar.runPar
                 (monadparRunMandel valX valY valDepth valThreshold))
