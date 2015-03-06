@@ -38,7 +38,8 @@ module Control.Parallel.HdpH.Internal.Location
     dbgMsgRcvd,    -- :: Int
     dbgGIVar,      -- :: Int
     dbgIVar,       -- :: Int
-    dbgGRef        -- :: Int
+    dbgGRef,       -- :: Int
+    dbgWSScheduler -- :: Int
   ) where
 
 import Prelude hiding (error)
@@ -155,15 +156,30 @@ debug :: Int -> String -> IO ()
 debug level message = do
   sysLevel <- readIORef debugRef
   when (level <= sysLevel) $ do
+    let tag = getDebugTag level
     maybe_this <- myNode'
     case maybe_this of
-      Just this -> hPutStrLn stderr $ show this ++ " " ++ message
-      Nothing   -> hPutStrLn stderr $ "<unknown> " ++ message
+      Just this -> hPutStrLn stderr $ tag ++ " " ++ show this ++ " " ++ message
+      Nothing   -> hPutStrLn stderr $ tag ++ " <unknown> " ++ message
 
+getDebugTag :: Int -> String
+getDebugTag l
+  | l == dbgStats         =  "[Stats]"
+  | l == dbgStaticTab     =  "[StaticTable]"
+  | l == dbgFailure       =  "[Failure]"
+  | l == dbgSpark         =  "[Spark]"
+  | l == dbgMsgSend       =  "[Send]"
+  | l == dbgMsgRcvd       =  "[Receive]"
+  | l == dbgGIVar         =  "[GlobalIVar]"
+  | l == dbgIVar          =  "[IVar]"
+  | l == dbgGRef          =  "[GRef]"
+  | l == dbgWSScheduler   =  "[WSScheduler]"
+  | otherwise             =  ""
 
 -- debug levels
 dbgNone, dbgStats, dbgStaticTab, dbgFailure, dbgSpark :: Int
 dbgMsgSend, dbgMsgRcvd, dbgGIVar, dbgIVar, dbgGRef :: Int
+dbgWSScheduler :: Int
 dbgNone      = 0  -- no debug output
 dbgStats     = 1  -- print final stats
 dbgStaticTab = 2  -- on main node, print Static table
@@ -174,6 +190,7 @@ dbgMsgRcvd   = 6  -- messages being handled
 dbgGIVar     = 7  -- op on a GIVar (globalising or writing to)
 dbgIVar      = 8  -- blocking/unblocking on IVar (only log event type)
 dbgGRef      = 9  -- registry update
+dbgWSScheduler = 10 -- Work Stealing Scheduler info
 
 
 -----------------------------------------------------------------------------
