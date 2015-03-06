@@ -54,6 +54,7 @@ import Data.Serialize (Serialize)
 import qualified Data.Serialize (put, get)
 import Data.Word (Word8)
 import System.Random (randomRIO)
+import System.Clock
 
 import Control.Parallel.HdpH.Conf
        (RTSConf( maxHops
@@ -79,7 +80,8 @@ import Control.Parallel.HdpH.Internal.Location
        (Node, dbgMsgSend, dbgSpark, dbgWSScheduler, error)
 import qualified Control.Parallel.HdpH.Internal.Location as Location (debug)
 import Control.Parallel.HdpH.Internal.Topology (dist)
-import Control.Parallel.HdpH.Internal.Misc (encodeLazy, ActionServer, reqAction)
+import Control.Parallel.HdpH.Internal.Misc
+       (encodeLazy, ActionServer, reqAction, timeDiffMSecs)
 import Control.Parallel.HdpH.Internal.Type.Par (Spark)
 
 
@@ -95,16 +97,18 @@ type SparkM m = ReaderT (State m) IO
 -- spark pool state (mutable bits held in IORefs and the like)
 data State m =
   State {
-    s_conf       :: RTSConf,               -- config data
-    s_pools      :: DistMap (DequeIO (Spark m)),  -- actual spark pools
-    s_sparkOrig  :: IORef (Maybe Node),    -- primary FISH target (recent src)
-    s_fishing    :: IORef Bool,            -- True iff FISH outstanding
-    s_noWork     :: ActionServer,          -- for clearing "FISH outstndg" flag
-    s_idleScheds :: Sem,                   -- semaphore for idle schedulers
-    s_fishSent   :: IORef Int,             -- #FISH sent
-    s_sparkRcvd  :: IORef Int,             -- #sparks received
-    s_sparkGen   :: IORef Int,             -- #sparks generated
-    s_sparkConv  :: IORef Int }            -- #sparks converted
+    s_conf             :: RTSConf,            -- config data
+    s_pools            :: DistMap (DequeIO (Spark m)), -- actual spark pools
+    s_sparkOrig        :: IORef (Maybe Node),-- primary FISH target (recent src)
+    s_fishing          :: IORef Bool,        -- True iff FISH outstanding
+    s_noWork           :: ActionServer,      -- for clearing "FISH outstndg" flag
+    s_idleScheds       :: Sem,               -- semaphore for idle schedulers
+    s_fishSent         :: IORef Int,         -- #FISH sent
+    s_sparkRcvd        :: IORef Int,         -- #sparks received
+    s_sparkGen         :: IORef Int,         -- #sparks generated
+    s_sparkConv        :: IORef Int,         -- #sparks converted
+    s_lastFISHSendTime :: IORef TimeSpec     -- #Time the last FISH left
+    }
 
 
 -- Eliminates the 'SparkM' layer by executing the given 'SparkM' action on
@@ -113,24 +117,27 @@ data State m =
 run :: RTSConf -> ActionServer -> Sem -> SparkM m a -> IO a
 run conf noWorkServer idleSem action = do
   -- set up spark pool state (with as many pools as there are equidist bases)
-  rs        <- getDistsIO
-  pools     <- DistMap.new <$> sequence [emptyIO | _ <- rs]
-  sparkOrig <- newIORef Nothing
-  fishing   <- newIORef False
-  fishSent  <- newIORef 0
-  sparkRcvd <- newIORef 0
-  sparkGen  <- newIORef 0
-  sparkConv <- newIORef 0
-  let s0 = State { s_conf       = conf,
-                   s_pools      = pools,
-                   s_sparkOrig  = sparkOrig,
-                   s_fishing    = fishing,
-                   s_noWork     = noWorkServer,
-                   s_idleScheds = idleSem,
-                   s_fishSent   = fishSent,
-                   s_sparkRcvd  = sparkRcvd,
-                   s_sparkGen   = sparkGen,
-                   s_sparkConv  = sparkConv }
+  rs           <- getDistsIO
+  pools        <- DistMap.new <$> sequence [emptyIO | _ <- rs]
+  sparkOrig    <- newIORef Nothing
+  fishing      <- newIORef False
+  fishSent     <- newIORef 0
+  sparkRcvd    <- newIORef 0
+  sparkGen     <- newIORef 0
+  sparkConv    <- newIORef 0
+  lastFISHTime <- newIORef (TimeSpec 0 0)
+  let s0 = State { s_conf             = conf,
+                   s_pools            = pools,
+                   s_sparkOrig        = sparkOrig,
+                   s_fishing          = fishing,
+                   s_noWork           = noWorkServer,
+                   s_idleScheds       = idleSem,
+                   s_fishSent         = fishSent,
+                   s_sparkRcvd        = sparkRcvd,
+                   s_sparkGen         = sparkGen,
+                   s_sparkConv        = sparkConv,
+                   s_lastFISHSendTime = lastFISHTime
+                   }
   -- run monad
   runReaderT action s0
 
@@ -224,6 +231,20 @@ getMinFishDly = minFishDly <$> s_conf <$> ask
 getMaxFishDly :: SparkM m Int
 getMaxFishDly = maxFishDly <$> s_conf <$> ask
 
+setFISHTimer :: TimeSpec -> SparkM m ()
+setFISHTimer s = do
+  t <- getLastFISHSendTime
+  liftIO $ atomicModifyIORef t (const (s, ()))
+
+resetFISHTimer :: SparkM m ()
+resetFISHTimer = do
+  let noTime = TimeSpec 0 0
+  t <- getLastFISHSendTime
+  liftIO $ atomicModifyIORef t (const (noTime, ()))
+
+
+getLastFISHSendTime :: SparkM m (IORef TimeSpec)
+getLastFISHSendTime = s_lastFISHSendTime <$> ask
 
 -----------------------------------------------------------------------------
 -- access to Comm module state
@@ -529,6 +550,10 @@ sendFISH r_min = do
       -- send FISH (or NOWORK) message
       debug dbgMsgSend $ let msg_size = BS.length (encodeLazy msg) in
         show msg ++ " ->> " ++ show target ++ " Length: " ++ show msg_size
+
+      s <- liftIO $ getTime Monotonic
+      setFISHTimer s
+
       liftIO $ Comm.send target $ encodeLazy msg
       case msg of
         FISH _ _ _ _ _ -> getFishSentCtr >>= incCtr  -- update stats
@@ -616,6 +641,8 @@ dispatchFISH _ = error "panic in dispatchFISH: not a FISH message"
 -- * clears the "FISH outstanding" flag.
 handleSCHEDULE :: Msg m -> SparkM m ()
 handleSCHEDULE (SCHEDULE spark r victim) = do
+  debugFISHLatency "SCHEDULE"
+
   putRemoteSpark 0 r spark
 
   setSparkOrigHist victim
@@ -635,6 +662,8 @@ handleSCHEDULE _ = error "panic in handleSCHEDULE: not a SCHEDULE message"
 --   (almost) no work.
 handleNOWORK :: Msg m -> SparkM m ()
 handleNOWORK NOWORK = do
+  debugFISHLatency "NOWORK"
+
   clearSparkOrigHist
   fishingFlag   <- getFishingFlag
   noWorkServer  <- getNoWorkServer
@@ -702,3 +731,11 @@ uniqRandomsRR n universes =
 -- debugging
 debug :: Int -> String -> SparkM m ()
 debug level message = liftIO $ Location.debug level message
+
+debugFISHLatency :: String -> SparkM m ()
+debugFISHLatency msgType = do
+  e <- liftIO $ getTime Monotonic
+  s <- getLastFISHSendTime >>= liftIO . readIORef
+  debug dbgWSScheduler $
+    "Time between FISH and " ++ msgType ++ ":" ++ show (timeDiffMSecs s e) ++ " ms"
+  resetFISHTimer

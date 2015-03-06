@@ -62,8 +62,9 @@ module Control.Parallel.HdpH.Internal.Misc
     killServer,    -- :: ActionServer -> IO ()
     reqAction,     -- :: ActionServer -> Action -> IO ()
 
-    -- * timing IO actions
-    timeIO         -- :: IO a -> IO (a, NominalDiffTime)
+    -- * timing functions
+    timeIO,        -- :: IO a -> IO (a, NominalDiffTime)
+    timeDiffMSecs  -- :: TimeSpec -> TimeSpec -> Double
   ) where
 
 import Prelude hiding (error)
@@ -84,6 +85,7 @@ import qualified Data.Serialize (encode, decode, encodeLazy, decodeLazy)
 import Data.Time.Clock (NominalDiffTime, diffUTCTime, getCurrentTime)
 import Data.Word (Word8)
 import System.Random (randomRIO)
+import System.Clock
 
 import Control.Parallel.HdpH.Internal.Location (error)
 
@@ -295,3 +297,10 @@ timeIO action = do t0 <- getCurrentTime
                    x <- action
                    t1 <- getCurrentTime
                    return (x, diffUTCTime t1 t0)
+
+timeDiffMSecs :: TimeSpec -> TimeSpec -> Double
+timeDiffMSecs (TimeSpec s1 n1) (TimeSpec s2 n2) = fromIntegral (t2 - t1)
+                                                          /
+                                                  fromIntegral (10 ^ 6)
+  where t1 = (fromIntegral s1 * 10 ^ 9) + fromIntegral n1
+        t2 = (fromIntegral s2 * 10 ^ 9) + fromIntegral n2
