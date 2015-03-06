@@ -157,6 +157,46 @@ dc_algorithm (minX, minY, maxX, maxY, winX, winY, maxDepth) = Thunk $ \bnds ->
     r_scale =  maxY - minY  :: Double
     c_scale =  maxX - minX  :: Double
 
+---------------------------------------------------------------------------
+-- Timed Version
+hdphDandCMandelTimed :: Int -> Int -> Int -> Int -> Par VecTree
+hdphDandCMandelTimed = hdphDandCMandelTimed' (-2) (-2) 2 2
+
+hdphDandCMandelTimed' :: Double -> Double -- (minX, MinY)
+                 -> Double -> Double -- (maxX, maxY)
+                 -> Int -> Int -- (winX, winY)
+                 -> Int -- Depth
+                 -> Int -- Threshold
+                 -> Par VecTree
+hdphDandCMandelTimed' minX minY maxX maxY winX winY maxDepth threshold = do
+  res <- parDivideAndConquer
+          $(mkClosure [|dc_trivial threshold|])
+          $(mkClosure [|dc_decompose|])
+          $(mkClosure [|dc_combine|])
+          $(mkClosure [|dc_algorithm_timed (minX, minY, maxX, maxY, winX, winY, maxDepth)|])
+          (toClosure (0,winY-1))
+  return $ unClosure res
+
+dc_algorithm_timed :: (Double, Double, -- (minX, minY)
+                       Double, Double, -- (maxX, maxY)
+                       Int, Int, -- (winX, winY)
+                       Int) -- maxDepth
+                   -> Thunk (Closure (Int,Int) -> Par (Closure VecTree))
+dc_algorithm_timed (minX, minY, maxX, maxY, winX, winY, maxDepth) = Thunk $ \bnds ->
+  let (min,max) = unClosure bnds
+      v = foldl go V.empty [min..max]
+  in  do s <- io $ getTime Monotonic
+         vec <- force v
+         e <- io $ getTime Monotonic
+         io $ putStrLn $ show min ++ "," ++ show max ++ ":" ++ show (timeDiffMSecs s e)
+         return $ toClosure (Leaf vec)
+  where
+    go a y = a V.++ V.generate winX (\x -> mandelStep y x)
+    mandelStep i j = mandel maxDepth (calcZ i j)
+    calcZ i j = ((fromIntegral j * r_scale) / fromIntegral winY + minY) :+
+                ((fromIntegral i * c_scale) / fromIntegral winX + minX)
+    r_scale =  maxY - minY  :: Double
+    c_scale =  maxX - minX  :: Double
 -----------------------------------------------------------------------------
 -- initialisation, argument processing and 'main'
 
@@ -193,6 +233,8 @@ declareStatic =
      declare $(static 'dc_decompose),
      declare $(static 'dc_combine),
      declare $(static 'dc_algorithm),
+
+     declare $(static 'dc_algorithm_timed),
 
      declare $(static 'mandel)]
 ---------------------------------------------------------------------------
@@ -245,6 +287,9 @@ main = do
               printOutput (Just p,t)
       2 -> do res <- timeIOMs $ evaluate =<< runParIO conf
                                 (hdphDandCMandel valX valY valDepth valThreshold)
+              printOutput res
+      3 -> do res <- timeIOMs $ evaluate =<< runParIO conf
+                                (hdphDandCMandelTimed valX valY valDepth valThreshold)
               printOutput res
       _ -> return ()
 
