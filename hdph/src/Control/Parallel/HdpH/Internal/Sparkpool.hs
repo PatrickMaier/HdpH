@@ -76,7 +76,7 @@ import qualified Control.Parallel.HdpH.Internal.Data.DistMap as DistMap
 import Control.Parallel.HdpH.Internal.Data.Sem (Sem)
 import qualified Control.Parallel.HdpH.Internal.Data.Sem as Sem (wait, signal)
 import Control.Parallel.HdpH.Internal.Location
-       (Node, dbgMsgSend, dbgSpark, error)
+       (Node, dbgMsgSend, dbgSpark, dbgWSScheduler, error)
 import qualified Control.Parallel.HdpH.Internal.Location as Location (debug)
 import Control.Parallel.HdpH.Internal.Topology (dist)
 import Control.Parallel.HdpH.Internal.Misc (encodeLazy, ActionServer, reqAction)
@@ -616,12 +616,14 @@ dispatchFISH _ = error "panic in dispatchFISH: not a FISH message"
 -- * clears the "FISH outstanding" flag.
 handleSCHEDULE :: Msg m -> SparkM m ()
 handleSCHEDULE (SCHEDULE spark r victim) = do
-  -- put spark into pool, wakeup scheduler and update stats
   putRemoteSpark 0 r spark
-  -- record source of spark
+
   setSparkOrigHist victim
-  -- clear FISHING flag
+  debug dbgWSScheduler $
+    "Spark received from radius: " ++ show r
+
   void $ getFishingFlag >>= clearFlag
+
 handleSCHEDULE _ = error "panic in handleSCHEDULE: not a SCHEDULE message"
 
 
