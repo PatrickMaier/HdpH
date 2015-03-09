@@ -733,6 +733,7 @@ debug :: Int -> String -> SparkM m ()
 debug level message = liftIO $ Location.debug level message
 
 debugFISHLatency :: String -> SparkM m ()
+{-# INLINE debugFISHLatency #-}
 debugFISHLatency msgType = do
   e <- liftIO $ getTime Monotonic
   s <- getLastFISHSendTime >>= liftIO . readIORef
