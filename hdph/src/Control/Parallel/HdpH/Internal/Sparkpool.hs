@@ -394,11 +394,14 @@ data Msg m = TERM        -- termination message (broadcast from root and back)
                [Node]      -- remaining candidate targets
                [Node]      -- remaining primary source targets
                !Bool       -- True iff FISH may be forwarded to primary source
+               !Int        -- Forward Count
            | NOWORK      -- reply to thief's FISH (when there is no work)
+               !Int        -- forward count of FISH responded to.
            | SCHEDULE    -- reply to thief's FISH (when there is work)
                (Spark m)   -- spark
                !Dist       -- spark's radius
                !Node       -- victim
+               !Int        -- forward count of FISH responded to.
            | PUSH        -- eagerly pushing work
                (Spark m)   -- spark
 
@@ -418,27 +421,32 @@ data Msg m = TERM        -- termination message (broadcast from root and back)
 instance Show (Msg m) where
   showsPrec _ (TERM root)                = showString "TERM(" . shows root .
                                            showString ")"
-  showsPrec _ (FISH thief avoid candidates sources fwd)
+  showsPrec _ (FISH thief avoid candidates sources fwd fwdcnt)
                                          = showString "FISH(" . shows thief .
                                            showString "," . shows avoid .
                                            showString "," . shows candidates .
                                            showString "," . shows sources .
                                            showString "," . shows fwd .
+                                           showString "," . shows fwdcnt .
                                            showString ")"
-  showsPrec _ (NOWORK)                   = showString "NOWORK"
-  showsPrec _ (SCHEDULE _spark r victim) = showString "SCHEDULE(_," . shows r .
+  showsPrec _ (NOWORK fwdc)              = showString "NOWORK(" . shows fwdc .
+                                           showString ")"
+  showsPrec _ (SCHEDULE _spark r victim fwdcnt)
+                                         = showString "SCHEDULE(_," . shows r .
                                            showString "," . shows victim .
+                                           showString "," . shows fwdcnt .
                                            showString ")"
   showsPrec _ (PUSH _spark)              = showString "PUSH(_)"
 
 
 instance NFData (Msg m) where
   rnf (TERM _root)                                = ()
-  rnf (FISH _thief avoid candidates sources _fwd) = rnf avoid `seq`
+  rnf (FISH _thief avoid candidates sources _fwd fwdcnt) =
+                                                    rnf avoid `seq`
                                                     rnf candidates `seq`
                                                     rnf sources
-  rnf (NOWORK)                                    = ()
-  rnf (SCHEDULE spark _r _victim)                 = rnf spark
+  rnf (NOWORK fwdcnt)                             = ()
+  rnf (SCHEDULE spark _r _victimm fwdcnt)         = rnf spark
   rnf (PUSH spark)                                = rnf spark
 
 
@@ -446,18 +454,22 @@ instance NFData (Msg m) where
 instance Serialize (Msg m) where
   put (TERM root)               = Data.Serialize.put (0 :: Word8) >>
                                   Data.Serialize.put root
-  put (FISH thief avoid candidates sources fwd)
+  put (FISH thief avoid candidates sources fwd fwdcnt)
                                 = Data.Serialize.put (1 :: Word8) >>
                                   Data.Serialize.put thief >>
                                   Data.Serialize.put avoid >>
                                   Data.Serialize.put candidates >>
                                   Data.Serialize.put sources >>
-                                  Data.Serialize.put fwd
-  put (NOWORK)                  = Data.Serialize.put (2 :: Word8)
-  put (SCHEDULE spark r victim) = Data.Serialize.put (3 :: Word8) >>
+                                  Data.Serialize.put fwd >>
+                                  Data.Serialize.put fwdcnt
+  put (NOWORK fwdcnt)           = Data.Serialize.put (2 :: Word8) >>
+                                  Data.Serialize.put fwdcnt
+  put (SCHEDULE spark r victim fwdcnt)
+                                = Data.Serialize.put (3 :: Word8) >>
                                   Data.Serialize.put spark >>
                                   Data.Serialize.put r >>
-                                  Data.Serialize.put victim
+                                  Data.Serialize.put victim >>
+                                  Data.Serialize.put fwdcnt
   put (PUSH spark)              = Data.Serialize.put (4 :: Word8) >>
                                   Data.Serialize.put spark
 
@@ -470,12 +482,15 @@ instance Serialize (Msg m) where
                      candidates <- Data.Serialize.get
                      sources    <- Data.Serialize.get
                      fwd        <- Data.Serialize.get
-                     return $ FISH thief avoid candidates sources fwd
-             2 -> do return $ NOWORK
+                     fwdcnt     <- Data.Serialize.get
+                     return $ FISH thief avoid candidates sources fwd fwdcnt
+             2 -> do fwdcnt <- Data.Serialize.get
+                     return $ NOWORK fwdcnt
              3 -> do spark  <- Data.Serialize.get
                      r      <- Data.Serialize.get
                      victim <- Data.Serialize.get
-                     return $ SCHEDULE spark r victim
+                     fwdcnt <- Data.Serialize.get
+                     return $ SCHEDULE spark r victim fwdcnt
              4 -> do spark  <- Data.Serialize.get
                      return $ PUSH spark
              _ -> error "panic in instance Serialize (Msg m): tag out of range"
@@ -542,11 +557,11 @@ sendFISH r_min = do
       -- compose FISH message
       let (target, msg) =
             case maybe_src of
-              Just src -> (src, FISH thief [] candidates [] False)
+              Just src -> (src, FISH thief [] candidates [] False 0)
               Nothing  ->
                 case candidates of
-                  cand:cands -> (cand, FISH thief [] cands [] True)
-                  []         -> (thief, NOWORK)  -- no candidates --> NOWORK
+                  cand:cands -> (cand, FISH thief [] cands [] True 0)
+                  []         -> (thief, NOWORK 0)  -- no candidates --> NOWORK
       -- send FISH (or NOWORK) message
       debug dbgMsgSend $ let msg_size = BS.length (encodeLazy msg) in
         show msg ++ " ->> " ++ show target ++ " Length: " ++ show msg_size
@@ -556,8 +571,8 @@ sendFISH r_min = do
 
       liftIO $ Comm.send target $ encodeLazy msg
       case msg of
-        FISH _ _ _ _ _ -> getFishSentCtr >>= incCtr  -- update stats
-        _              -> return ()
+        FISH _ _ _ _ _ _ -> getFishSentCtr >>= incCtr  -- update stats
+        _                -> return ()
 
 -- Return up to 'n' random candidates drawn from the equidistant bases,
 -- excluding the current node and sorted in order of ascending distance.
@@ -570,9 +585,9 @@ randomCandidates n = do
 
 -- Dispatch FISH, SCHEDULE and NOWORK messages to their respective handlers.
 dispatch :: Msg m -> SparkM m ()
-dispatch msg@(FISH _ _ _ _ _)   = handleFISH msg
-dispatch msg@(SCHEDULE _ _ _)   = handleSCHEDULE msg
-dispatch msg@(NOWORK)           = handleNOWORK msg
+dispatch msg@(FISH _ _ _ _ _ _)   = handleFISH msg
+dispatch msg@(SCHEDULE _ _ _ _)   = handleSCHEDULE msg
+dispatch msg@(NOWORK _)           = handleNOWORK msg
 dispatch msg = error $ "HdpH.Internal.Sparkpool.dispatch: " ++
                        show msg ++ " unexpected"
 
@@ -582,12 +597,12 @@ dispatch msg = error $ "HdpH.Internal.Sparkpool.dispatch: " ++
 -- * with NOWORK if FISH has travelled far enough, or else
 -- * forwards FISH to a candidate target or a primary source of work.
 handleFISH :: Msg m -> SparkM m ()
-handleFISH msg@(FISH thief _avoid _candidates _sources _fwd) = do
+handleFISH msg@(FISH thief _avoid _candidates _sources _fwd fwdcnt) = do
   me <- liftIO Comm.myNode
   maybe_spark <- selectRemoteSpark 0 (dist thief me)
   case maybe_spark of
     Just (spark, r) -> do -- compose and send SCHEDULE
-      let scheduleMsg = SCHEDULE spark r me
+      let scheduleMsg = SCHEDULE spark r me (fwdcnt + 1)
       debug dbgMsgSend $ let msg_size = BS.length (encodeLazy scheduleMsg) in
         show scheduleMsg ++ " ->> " ++ show thief ++ " Length: " ++ show msg_size
       liftIO $ Comm.send thief $ encodeLazy scheduleMsg
@@ -604,33 +619,34 @@ handleFISH _ = error "panic in handleFISH: not a FISH message"
 -- Auxiliary function, called by 'handleFISH' when there is nought to schedule.
 -- Constructs a forward and selects a target, or constructs a NOWORK reply.
 forwardFISH :: Node -> Maybe Node -> Msg m -> (Node, Msg m)
-forwardFISH me _          (FISH thief avoid candidates sources False) =
-  dispatchFISH (FISH thief (me:avoid) candidates sources False)
-forwardFISH me Nothing    (FISH thief avoid candidates sources _)     =
-  dispatchFISH (FISH thief (me:avoid) candidates sources False)
-forwardFISH me (Just src) (FISH thief avoid candidates sources True)  =
+forwardFISH me _          (FISH thief avoid candidates sources False fc) =
+  dispatchFISH (FISH thief (me:avoid) candidates sources False fc)
+forwardFISH me Nothing    (FISH thief avoid candidates sources _ fc)     =
+  dispatchFISH (FISH thief (me:avoid) candidates sources False fc)
+forwardFISH me (Just src) (FISH thief avoid candidates sources True fc)  =
   spineList sources' `seq`
-  dispatchFISH (FISH thief (me:avoid) candidates sources' False)
+  dispatchFISH (FISH thief (me:avoid) candidates sources' False fc)
     where
       sources' = if src `elem` thief:(sources ++ avoid ++ candidates)
                    then sources  -- src is already known
                    else insertBy (comparing $ dist thief) src sources
 forwardFISH _ _ _ = error "panic in forwardFISH: not a FISH message"
 
--- Auxiliary function, called by 'forwardFISH'. 
+-- Auxiliary function, called by 'forwardFISH'.
 -- Extracts target and message from preliminary FISH message.
 dispatchFISH :: Msg m -> (Node, Msg m)
-dispatchFISH (FISH thief avoid' candidates sources' _) =
+dispatchFISH (FISH thief avoid' candidates sources' _ fwdcnt) =
+  let fc = fwdcnt + 1 in
   case (candidates, sources') of
-    ([],         [])       -> (thief, NOWORK)
-    (cand:cands, [])       -> (cand,  FISH thief avoid' cands []   True)
-    ([],         src:srcs) -> (src,   FISH thief avoid' []    srcs False)
+    ([],         [])       -> (thief, NOWORK fc)
+    (cand:cands, [])       -> (cand,  FISH thief avoid' cands []   True  fc)
+    ([],         src:srcs) -> (src,   FISH thief avoid' []    srcs False fc)
     (cand:cands, src:srcs) ->
       if dist thief cand < dist thief src
         then -- cand is closest to thief
-             (cand, FISH thief avoid' cands      sources' True)
+             (cand, FISH thief avoid' cands      sources' True fc)
         else -- otherwise prefer src
-             (src,  FISH thief avoid' candidates srcs     False)
+             (src,  FISH thief avoid' candidates srcs     False fc)
 dispatchFISH _ = error "panic in dispatchFISH: not a FISH message"
 
 
@@ -640,8 +656,11 @@ dispatchFISH _ = error "panic in dispatchFISH: not a FISH message"
 -- * records spark sender and updates stats, and
 -- * clears the "FISH outstanding" flag.
 handleSCHEDULE :: Msg m -> SparkM m ()
-handleSCHEDULE (SCHEDULE spark r victim) = do
+handleSCHEDULE (SCHEDULE spark r victim fwdcnt) = do
   debugFISHLatency "SCHEDULE" (Just victim)
+
+  debug dbgWSScheduler $
+    "Received SCHEDULE. FISH was forwarded: " ++ show fwdcnt ++ " times."
 
   putRemoteSpark 0 r spark
 
@@ -661,8 +680,11 @@ handleSCHEDULE _ = error "panic in handleSCHEDULE: not a SCHEDULE message"
 -- Rationale for random delay: to prevent FISH flooding when there is
 --   (almost) no work.
 handleNOWORK :: Msg m -> SparkM m ()
-handleNOWORK NOWORK = do
+handleNOWORK (NOWORK fwdcnt) = do
   debugFISHLatency "NOWORK" Nothing
+
+  debug dbgWSScheduler $
+    "Received NOWORK. FISH was forwarded: " ++ show fwdcnt ++ " times."
 
   clearSparkOrigHist
   fishingFlag   <- getFishingFlag
