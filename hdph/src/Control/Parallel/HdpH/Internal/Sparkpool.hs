@@ -657,10 +657,7 @@ dispatchFISH _ = error "panic in dispatchFISH: not a FISH message"
 -- * clears the "FISH outstanding" flag.
 handleSCHEDULE :: Msg m -> SparkM m ()
 handleSCHEDULE (SCHEDULE spark r victim fwdcnt) = do
-  debugFISHLatency "SCHEDULE" (Just victim)
-
-  debug dbgWSScheduler $
-    "Received SCHEDULE. FISH was forwarded: " ++ show fwdcnt ++ " times."
+  debugWSSchedulerLatency "SCHEDULE" (Just victim) fwdcnt
 
   putRemoteSpark 0 r spark
 
@@ -681,10 +678,7 @@ handleSCHEDULE _ = error "panic in handleSCHEDULE: not a SCHEDULE message"
 --   (almost) no work.
 handleNOWORK :: Msg m -> SparkM m ()
 handleNOWORK (NOWORK fwdcnt) = do
-  debugFISHLatency "NOWORK" Nothing
-
-  debug dbgWSScheduler $
-    "Received NOWORK. FISH was forwarded: " ++ show fwdcnt ++ " times."
+  debugWSSchedulerLatency "NOWORK" Nothing fwdcnt
 
   clearSparkOrigHist
   fishingFlag   <- getFishingFlag
@@ -754,16 +748,16 @@ uniqRandomsRR n universes =
 debug :: Int -> String -> SparkM m ()
 debug level message = liftIO $ Location.debug level message
 
-debugFISHLatency :: String -> Maybe Node -> SparkM m ()
-{-# INLINE debugFISHLatency #-}
-debugFISHLatency msgType node = do
+debugWSSchedulerLatency :: String -> Maybe Node -> Int -> SparkM m ()
+{-# INLINE debugWSSchedulerLatency #-}
+debugWSSchedulerLatency msgType node fcnt = do
   e <- liftIO $ getTime Monotonic
   s <- getLastFISHSendTime >>= liftIO . readIORef
   case node of
     Nothing -> debug dbgWSScheduler $
-      "Time between FISH and " ++ msgType ++ ":"
-      ++ show (timeDiffMSecs s e) ++ " ms"
+      "Time between FISH and " ++ msgType ++ " = "
+      ++ show (timeDiffMSecs s e) ++ " ms. " ++ show fcnt++ " forwards."
     Just n-> debug dbgWSScheduler $
-      "Time between FISH and " ++ msgType ++ " from " ++ show n ++ ":"
-      ++ show (timeDiffMSecs s e) ++ " ms"
+      "Time between FISH and " ++ msgType ++ " from " ++ show n ++ " = "
+      ++ show (timeDiffMSecs s e) ++ " ms. " ++ show fcnt ++ " forwards."
   resetFISHTimer
