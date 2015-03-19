@@ -262,7 +262,8 @@ createTransport myIP candidate_sockets = do
   case candidate_sockets of
     []         -> error $ thisFun ++ ": no socket"
     sock:socks -> do
-      t <- TCP.createTransport (show myIP) (show sock) TCP.defaultTCPParameters
+      let params = TCP.defaultTCPParameters { TCP.tcpNoDelay = True }
+      t <- TCP.createTransport (show myIP) (show sock) params
       case t of
         Right tp -> return tp
         Left e -> if null socks
