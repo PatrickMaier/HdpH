@@ -602,7 +602,7 @@ handleFISH msg@(FISH thief _avoid _candidates _sources _fwd fwdcnt) = do
   maybe_spark <- selectRemoteSpark 0 (dist thief me)
   case maybe_spark of
     Just (spark, r) -> do -- compose and send SCHEDULE
-      let scheduleMsg = SCHEDULE spark r me (fwdcnt + 1)
+      let scheduleMsg = SCHEDULE spark r me fwdcnt
       debug dbgMsgSend $ let msg_size = BS.length (encodeLazy scheduleMsg) in
         show scheduleMsg ++ " ->> " ++ show thief ++ " Length: " ++ show msg_size
       liftIO $ Comm.send thief $ encodeLazy scheduleMsg
@@ -638,7 +638,7 @@ dispatchFISH :: Msg m -> (Node, Msg m)
 dispatchFISH (FISH thief avoid' candidates sources' _ fwdcnt) =
   let fc = fwdcnt + 1 in
   case (candidates, sources') of
-    ([],         [])       -> (thief, NOWORK fc)
+    ([],         [])       -> (thief, NOWORK fwdcnt)
     (cand:cands, [])       -> (cand,  FISH thief avoid' cands []   True  fc)
     ([],         src:srcs) -> (src,   FISH thief avoid' []    srcs False fc)
     (cand:cands, src:srcs) ->
