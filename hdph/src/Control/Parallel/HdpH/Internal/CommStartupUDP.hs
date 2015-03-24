@@ -23,7 +23,7 @@ module Control.Parallel.HdpH.Internal.CommStartupUDP
   ) where
 
 import Prelude
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (forkIO, threadDelay, killThread)
 import Control.Monad (forever)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS (empty, length, null)
@@ -78,14 +78,16 @@ allgatherByteStrings max_size bcast_time bcast_delay recv_time n bs = do
   -- Broadcast empty bytestring if 'bs' is too big
   let bs0 | BS.length bs > max_size = BS.empty
           | otherwise               = bs
-  _ <- forkIO $ bcastByteString bcast_time bcast_delay bs0
+  bcast_tid <- forkIO $ bcastByteString bcast_time bcast_delay bs0
   maybe_bss <- recvByteStrings max_size recv_time n
-  case maybe_bss of
-    Nothing  -> return []
-    Just bss -> -- NOTE: length bss == n; now check for empty bytestring
-                if any BS.null bss
-                  then return []
-                  else return bss
+
+  res <- case maybe_bss of
+           Nothing  -> return []
+           Just bss -> -- NOTE: length bss == n; now check for empty bytestring
+                       if any BS.null bss then return [] else return bss
+
+  killThread bcast_tid
+  return res
 
 
 -- | Same as 'allgatherByteStrings'; with all parameters at default value.
