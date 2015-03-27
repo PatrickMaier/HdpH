@@ -43,7 +43,7 @@ module Control.Parallel.HdpH.Internal.Location
 
 import Prelude hiding (error)
 import qualified Prelude (error)
-import Control.DeepSeq (NFData)
+import Control.DeepSeq (NFData(rnf))
 import Control.Exception (catch, evaluate)
 import Control.Monad (when)
 import Data.Functor ((<$>))
@@ -92,7 +92,8 @@ instance Show Node where
                                  shows (address n) . showChar '>'
 
 -- orphan instance
-instance NFData Node  -- default instance suffices (due to hyperstrictness)
+instance NFData Node where
+  rnf x = seq x ()
 
 -- orphan instance
 instance Hashable Node where

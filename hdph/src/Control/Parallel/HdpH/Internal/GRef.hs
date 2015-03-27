@@ -95,7 +95,8 @@ instance Show (GRef a) where
     showString "GRef:" . shows (at ref) . showString "." . shows (slot ref)
 
 -- orphan instance
-instance NFData (GRef a)  -- default instance suffices (due to hyperstrictness)
+instance NFData (GRef a) where
+  rnf x = seq x ()
 
 -- orphan instance
 -- NOTE: Can't derive this instance because 'get' must ensure hyperstrictness

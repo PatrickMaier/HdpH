@@ -213,8 +213,8 @@ instance Ord StaticLabel where
 instance Show StaticLabel where
   showsPrec _ lbl = showString (name lbl)  -- show only reference name
 
-instance NFData StaticLabel -- default inst suffices (due to hyperstrictness)
-
+instance NFData StaticLabel where
+  rnf x = seq x ()
 
 -----------------------------------------------------------------------------
 -- Eq/Ord/Show/NFData instances for 'Static';
