@@ -6,6 +6,7 @@
 {-# LANGUAGE TemplateHaskell #-}  -- req'd for mkClosure, etc
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE BangPatterns #-}
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
@@ -21,7 +22,7 @@ import Data.IORef (IORef, newIORef, atomicWriteIORef, readIORef)
 import Data.List (stripPrefix, transpose, foldl1')
 import Data.Monoid (mconcat)
 import Data.Serialize (Serialize)
-import qualified Data.Serialize (put, get)
+import qualified Data.Serialize (put, get, putFloat64le, getFloat64le)
 import Data.Time.Clock (NominalDiffTime, diffUTCTime, getCurrentTime)
 import Data.Traversable (Traversable, mapM)
 import System.Environment (getArgs)
@@ -47,7 +48,7 @@ import Control.Parallel.HdpH.Dist (one)
 
 -- IORef holding pair of input matrices `a` and `tr_b` (ie. `b` transposed);
 -- initialised to invalid empty matrices.
-matrices :: IORef (Matrix Double, Matrix Double)
+matrices :: IORef (Matrix Double', Matrix Double')
 matrices = unsafePerformIO $ newIORef (Matrix [[]], Matrix [[]])
 {-# NOINLINE matrices #-}
 
@@ -82,6 +83,20 @@ pushEverywhere task = do
 
 
 -----------------------------------------------------------------------------
+-- double precision floating point numbers with more efficient serialisation
+
+newtype Double' = Double' { unDouble' :: Double }
+                  deriving (Eq, Ord, NFData, Random)
+
+instance Show Double' where
+  show = show . unDouble'
+
+instance Serialize Double' where
+  put = Data.Serialize.putFloat64le . unDouble'
+  get = Double' <$> Data.Serialize.getFloat64le
+
+
+-----------------------------------------------------------------------------
 -- rings as algebraic structures with addition and multiplication
 
 class Ring a where
@@ -92,9 +107,12 @@ class Ring a where
 
 instance Ring Int where { radd = (+); rmul = (*) }
 instance Ring Integer where { radd = (+); rmul = (*) }
+instance Ring Rational where { radd = (+); rmul = (*) }
 instance Ring Float where { radd = (+); rmul = (*) }
 instance Ring Double where { radd = (+); rmul = (*) }
-instance Ring Rational where { radd = (+); rmul = (*) }
+instance Ring Double' where
+  radd (Double' x) (Double' y) = Double' (x + y)
+  rmul (Double' x) (Double' y) = Double' (x * y)
 
 -- explicit `Ring` dictionary
 data RingD a = RingD { raddD :: a -> a -> a, rmulD :: a -> a -> a }
@@ -292,8 +310,8 @@ parMulT (k,l) a tr_b = do
 -- parallel matrix multiplication using Gentleman's algorithm;
 -- distributed memory (monomorphic), pure work stealing
 
-distStealMulT :: (Int,Int) -> Matrix Double -> Matrix Double
-              -> Par (Matrix Double)
+distStealMulT :: (Int,Int) -> Matrix Double' -> Matrix Double'
+              -> Par (Matrix Double')
 distStealMulT (k,l) a tr_b = do
   let addGIVar x =
         new >>= \ v -> glob v >>= \ gv -> return (x, gv, v)
@@ -307,9 +325,9 @@ distStealMulT (k,l) a tr_b = do
   result <- unBlock <$> mapM (return . unClosure <=< get) futures
   return $! evalShape result
 
-distStealMulT_abs :: (Matrix Double,
-                      Matrix Double,
-                      GIVar (Closure (Matrix Double)))
+distStealMulT_abs :: (Matrix Double',
+                      Matrix Double',
+                      GIVar (Closure (Matrix Double')))
                   -> Thunk (Par ())
 distStealMulT_abs (stripe_i, stripe_j, gv) =
   Thunk $ force (mulT stripe_i stripe_j) >>= rput gv . toClosure
@@ -320,8 +338,8 @@ distStealMulT_abs (stripe_i, stripe_j, gv) =
 -- distributed memory (monomorphic), predistribution of inputs + work stealing;
 -- predistribution relies on `matrices` holding a pair of valid matrices.
 
-pdistStealMulT :: (Int,Int) -> Matrix Double -> Matrix Double
-               -> Par (Matrix Double)
+pdistStealMulT :: (Int,Int) -> Matrix Double' -> Matrix Double'
+               -> Par (Matrix Double')
 pdistStealMulT (k,l) a tr_b = do
   let addGIVar x =
         new >>= \ v -> glob v >>= \ gv -> return (x, gv, v)
@@ -333,7 +351,7 @@ pdistStealMulT (k,l) a tr_b = do
   result <- unBlock <$> mapM (return . unClosure <=< get) futures
   return $! evalShape result
 
-pdistStealMulT_abs :: (Int, Int, Int, Int, GIVar (Closure (Matrix Double)))
+pdistStealMulT_abs :: (Int, Int, Int, Int, GIVar (Closure (Matrix Double')))
                    -> Thunk (Par ())
 pdistStealMulT_abs (i, j, k, l, gv) = Thunk $ do
   (a, tr_b) <- io $ readIORef matrices
@@ -347,13 +365,13 @@ pdistStealMulT_abs (i, j, k, l, gv) = Thunk $ do
 $(return [])
 
 -- orphan ToClosure instances (unavoidably so)
-instance ToClosure (Matrix Double) where locToClosure = $(here)
+instance ToClosure (Matrix Double') where locToClosure = $(here)
 
 declareStatic :: StaticDecl
 declareStatic =
   mconcat
     [HdpH.declareStatic,         -- declare Static deserialisers
-     declare (staticToClosure :: StaticToClosure (Matrix Double)),
+     declare (staticToClosure :: StaticToClosure (Matrix Double')),
      declare $(static 'distStealMulT_abs),
      declare $(static 'pdistStealMulT_abs)]
 
@@ -407,7 +425,7 @@ defK    = 125  -- block dimension
 
 
 outputResults :: Int -> (Int,Int) -> Int
-              -> (Maybe (Matrix Double, NominalDiffTime), NominalDiffTime)
+              -> (Maybe (Matrix Double', NominalDiffTime), NominalDiffTime)
               -> IO ()
 outputResults ver blkdim dim (res, total_t) =
   case res of
@@ -420,7 +438,8 @@ outputResults ver blkdim dim (res, total_t) =
           ver' = "v" ++ show ver
           blkdim'  = show (fst blkdim) ++ "x" ++ show (snd blkdim)
           dim'     = show dim ++ "x" ++ show dim
-          out'     = show (4 * sum out / fromIntegral (dim ^ 3)) -- expect ~ 1.0
+          sum_out  = unDouble' (sum out)
+          out'     = show (4 * sum_out / fromIntegral (dim ^ 3)) -- expect ~ 1.0
           run_t'   = show run_t
           total_t' = show total_t
 
