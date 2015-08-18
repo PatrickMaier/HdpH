@@ -23,7 +23,7 @@ import Control.Parallel.HdpH
         Thunk(Thunk), Closure, mkClosure,
         toClosure, ToClosure(locToClosure),
         static, StaticToClosure, staticToClosure,
-        StaticDecl, declare, register, here)
+        StaticDecl, declare, register, here, initialiseHdpH)
 import qualified Control.Parallel.HdpH as HdpH (declareStatic)
 import Control.Parallel.HdpH.Dist (one)
 
@@ -119,6 +119,7 @@ main = do
   register declareStatic
   opts_args <- getArgs
   (conf, args) <- parseOpts opts_args
+  initialiseHdpH conf
   let n_tasks = parseArgs args
   if n_tasks <= 0
     then runParIO_ conf $ hello_world

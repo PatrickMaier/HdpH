@@ -16,6 +16,7 @@
 module Control.Parallel.HdpH.Internal.Comm
   ( -- * initialise comms layer
     withCommDo,    -- :: RTSConf -> IO () -> IO ()
+    initialiseHdpH,-- :: RTSConf -> IO ()
 
     -- * information about the comms layer of the virtual machine
     conf,          -- :: IO RTSConf
@@ -41,9 +42,11 @@ import Control.Monad (when, unless)
 import Data.ByteString as Strict (ByteString)
 import qualified Data.ByteString.Lazy as LBS (toChunks, fromChunks)
 import Data.Functor ((<$>))
-import Data.IORef (readIORef, writeIORef, atomicModifyIORef)
+import Data.IORef (IORef(..), newIORef, readIORef,
+                   writeIORef, atomicModifyIORef)
 import Data.Serialize (encode, decode)
 import Data.List (delete)
+import Data.Maybe (fromJust)
 
 import Network.Info (IPv4, ipv4, name, getNetworkInterfaces)
 import qualified Network.Transport as NT
@@ -73,8 +76,9 @@ import Control.Parallel.HdpH.Internal.CommStartupUDP (startupUDP)
 import Control.Parallel.HdpH.Internal.CommStartupTCP (startupTCP)
 
 import Control.Parallel.HdpH.Internal.Misc (shuffle)
+import GHC.Conc.Sync (ThreadId(..))
 
---import System.IO (hPutStrLn, hFlush, stderr)  -- DEBUG
+import System.IO.Unsafe (unsafePerformIO)
 
 
 thisModule :: String
@@ -165,85 +169,83 @@ debugLevel = debugLvl <$> conf
 
 -----------------------------------------------------------------------------
 -- initialise comms layer
+{-# OPTIONS_GHC -fno-cse #-}
+{-# NOINLINE hdphInitFlag #-}
+hdphInitFlag :: IORef (Maybe ThreadId)
+hdphInitFlag = unsafePerformIO $ newIORef Nothing
 
-withCommDo :: RTSConf -> IO () -> IO ()
-withCommDo conf0 action = do
+initialiseHdpH :: RTSConf -> IO ()
+initialiseHdpH conf = do
   -- check debug level
-  let debug_level = debugLvl conf0
-  unless (debug_level >= dbgNone) $
+  unless (debugLvl conf >= dbgNone) $
     error $ thisModule ++ ".withCommDo: debug level < none"
 
   -- create a transport
-  myIP <- discoverMyIP conf0
-  tp <- createTransport myIP candidateSockets
+  myIP <- discoverMyIP conf
+  tp   <- createTransport myIP candidateSockets
 
   -- create a local end point (and this node)
-  ep <- createEndPoint tp
-  let !me = mkNode (path conf0) (NT.address ep)
+  ep   <- createEndPoint tp
+  let !me = mkNode (path conf) (NT.address ep)
   let !me_enc = encode me
-
---  hPutStrLn stderr ("DEBUG.withCommDo.1: " ++ show me) >> hFlush stderr
 
   -- set up an isolated pre-state (not fully init, knows only this node) 
   msg_queue <- newChan
   atomicModifyIORef stateRef $ \ s ->
-    (s { s_conf = conf0, s_allNodes = [me],
-         s_msgQ = msg_queue, s_tp = tp, s_ep = ep {- , s_shutdown=shutdown -} }, ())
+    (s { s_conf = conf, s_allNodes = [me],
+         s_msgQ = msg_queue, s_tp = tp, s_ep = ep }, ())
 
   -- start up a listener
   listener_tid <- forkIO listener
 
---  hPutStrLn stderr ("DEBUG.withCommDo.2: " ++ show me ++ ", numProcs=" ++ show (numProcs conf0)) >> hFlush stderr
+  universe <- doStartup conf me_enc
+  when (null universe) $
+    error $ thisModule ++ ".withCommDo: node discovery failed"
 
-  (do
-    universe <- doStartup conf0 me_enc
-    when (null universe) $
-      error $ thisModule ++ ".withCommDo: node discovery failed"
+  let !root_node = minimum universe
+  let !root | me == root_node = Nothing
+            | otherwise       = Just root_node
 
---    hPutStrLn stderr ("DEBUG.withCommDo.3: " ++ show me ++ ", all=" ++ show universe) >> hFlush stderr
+  -- compute equidistant bases around me (after randomising universe)
+  others <- shuffle $ delete me universe
+  let all_nodes = [me] ++ others
+  let !n = length all_nodes
+  let !bases = equiDistMap all_nodes
 
-    -- elect root node
-    let !root_node = minimum universe
-    let !root | me == root_node = Nothing
-              | otherwise       = Just root_node
+  -- setup connection cache, sized according to RTSConf
+  connCache <- CacheMap.empty
+  CacheMap.resize (numConns conf) connCache
 
-    -- compute equidistant bases around me (after randomising universe)
-    others <- shuffle $ delete me universe
-    let all_nodes = [me] ++ others
-    let !n = length all_nodes
-    let !bases = equiDistMap all_nodes
+  -- set up fully initialised state
+  atomicModifyIORef stateRef $ \ s ->
+    (s { s_nodes = n, s_allNodes = all_nodes, s_bases = bases, s_root = root,
+         s_connCache = connCache }, ())
 
-    -- setup connection cache, sized according to RTSConf
-    connCache <- CacheMap.empty
-    CacheMap.resize (numConns conf0) connCache
+  -- set current node in Location module
+  -- NOTE: HdpH still relies on state in Location module;
+  --       this should be changed in the future.
+  writeIORef myNodeRef me
+  writeIORef allNodesRef all_nodes
+  writeIORef debugRef (debugLvl conf)
 
---    hPutStrLn stderr ("DEBUG.withCommDo.4: " ++ show me ++ ", conns=" ++ show (numConns conf0)) >> hFlush stderr
+  writeIORef hdphInitFlag (Just listener_tid)
 
-    -- set up fully initialised state
-    atomicModifyIORef stateRef $ \ s ->
-      (s { s_nodes = n, s_allNodes = all_nodes, s_bases = bases, s_root = root,
-           s_connCache = connCache }, ())
+  where
+    doStartup cfg thisNode = do
+      let backend = startupBackend cfg
+      case backend of
+        UDP -> do nodes <- startupUDP (numProcs cfg) thisNode
+                  return $ map decodeNode nodes
+        TCP -> do nodes <- startupTCP cfg thisNode
+                  return $ map decodeNode nodes
 
-    -- set current node in Location module
-    -- NOTE: HdpH still relies on state in Location module;
-    --       this should be changed in the future.
-    writeIORef myNodeRef me
-    writeIORef allNodesRef all_nodes
-    writeIORef debugRef (debugLvl conf0)
-
---    hPutStrLn stderr ("DEBUG.withCommDo.5: " ++ show me ++ ", isRoot=" ++ show root_node) >> hFlush stderr
-
-    -- run action
-    action)
-
-    -- shutdown
-    `finally` killThread listener_tid
-    -- TODO: reset state and free resources to reflect shutdown of comms layer
-  where doStartup cfg thisNode = do
-          let backend = startupBackend cfg
-          case backend of
-            UDP -> startupUDP (numProcs cfg) thisNode >>= return . map decodeNode
-            TCP -> startupTCP cfg thisNode >>= return . map decodeNode
+withCommDo :: RTSConf -> IO () -> IO ()
+withCommDo conf action = do
+    init <- readIORef hdphInitFlag
+    listenerId <- case init of
+      Nothing -> initialiseHdpH conf >> fromJust `fmap` readIORef hdphInitFlag
+      Just id -> return id
+    action `finally` killThread listenerId
 
 -- Return the IP address associated with the interface named in RTS config.
 discoverMyIP :: RTSConf -> IO IPv4

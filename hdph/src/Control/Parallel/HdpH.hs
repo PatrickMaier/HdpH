@@ -10,6 +10,9 @@
 module Control.Parallel.HdpH
   ( -- $Intro
 
+    -- (pre-)Init functionality
+    Comm.initialiseHdpH, -- :: RTSConf -> IO ()
+
     -- * Par monad
     -- $Par_monad
     Par,       -- kind * -> *; instances: Functor, Monad
@@ -81,7 +84,7 @@ import Control.Parallel.HdpH.Closure hiding (declareStatic)  -- re-export almost
 import qualified Control.Parallel.HdpH.Closure as Closure (declareStatic)
 import Control.Parallel.HdpH.Dist                            -- re-export whole module
 import qualified Control.Parallel.HdpH.Internal.Comm as Comm
-       (myNode, isRoot, equiDistBases)
+       (myNode, isRoot, equiDistBases, initialiseHdpH)
 import qualified Control.Parallel.HdpH.Internal.Data.DistMap as DistMap
        (lookup)
 import qualified Control.Parallel.HdpH.Internal.IVar as IVar (IVar, GIVar)
