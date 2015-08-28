@@ -1,0 +1,13 @@
+flags:
+  hdph:
+    withmpi: false
+  hdph-closure:
+    buildtest: false
+packages:
+- hdph-closure/
+- hdph/
+- location:
+    git: git@github.com:haskell-distributed/network-transport-tcp.git
+    commit: c2a316dc93a6d666e5cae61d5676f6a3ec5a7f83
+extra-deps: []
+resolver: lts-3.2

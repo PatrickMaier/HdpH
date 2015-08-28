@@ -73,7 +73,7 @@ Library
     cpp-options:     -DSTARTUP_MPI
   else
     other-modules:   Control.Parallel.HdpH.Internal.CommStartupUDP
-    build-depends:   network-multicast >= 0.0.7 && < 0.1
+    build-depends:   network-multicast >= 0.0.7 && < 0.2
     cpp-options:     -DSTARTUP_UDP
 
 Executable hello
@@ -102,7 +102,7 @@ Executable hello
     build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
     cpp-options:     -DSTARTUP_MPI
   else
-    build-depends:   network-multicast >= 0.0.7 && < 0.1
+    build-depends:   network-multicast >= 0.0.7 && < 0.2
     cpp-options:     -DSTARTUP_UDP
 
 Executable dist
@@ -131,7 +131,7 @@ Executable dist
     build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
     cpp-options:     -DSTARTUP_MPI
   else
-    build-depends:   network-multicast >= 0.0.7 && < 0.1
+    build-depends:   network-multicast >= 0.0.7 && < 0.2
     cpp-options:     -DSTARTUP_UDP
 
 Executable fib
@@ -160,7 +160,7 @@ Executable fib
     build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
     cpp-options:     -DSTARTUP_MPI
   else
-    build-depends:   network-multicast >= 0.0.7 && < 0.1
+    build-depends:   network-multicast >= 0.0.7 && < 0.2
     cpp-options:     -DSTARTUP_UDP
 
 Executable sumeuler
@@ -189,7 +189,7 @@ Executable sumeuler
     build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
     cpp-options:     -DSTARTUP_MPI
   else
-    build-depends:   network-multicast >= 0.0.7 && < 0.1
+    build-depends:   network-multicast >= 0.0.7 && < 0.2
     cpp-options:     -DSTARTUP_UDP
 
 Executable sumeuler-2level
@@ -218,7 +218,7 @@ Executable sumeuler-2level
     build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
     cpp-options:     -DSTARTUP_MPI
   else
-    build-depends:   network-multicast >= 0.0.7 && < 0.1
+    build-depends:   network-multicast >= 0.0.7 && < 0.2
     cpp-options:     -DSTARTUP_UDP
 
 Executable queens
@@ -247,7 +247,7 @@ Executable queens
     build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
     cpp-options:     -DSTARTUP_MPI
   else
-    build-depends:   network-multicast >= 0.0.7 && < 0.1
+    build-depends:   network-multicast >= 0.0.7 && < 0.2
     cpp-options:     -DSTARTUP_UDP
 
 Executable nbody
@@ -276,7 +276,7 @@ Executable nbody
     build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
     cpp-options:     -DSTARTUP_MPI
   else
-    build-depends:   network-multicast >= 0.0.7 && < 0.1
+    build-depends:   network-multicast >= 0.0.7 && < 0.2
     cpp-options:     -DSTARTUP_UDP
 
 Executable sum-liouville
@@ -285,7 +285,7 @@ Executable sum-liouville
                    array >= 0.4 && < 0.6,
                    base >= 4 && < 5,
                    cereal == 0.4.*,
-                   clock >= 0.4.1 && < 0.5,
+                   clock >= 0.4.1 && < 0.6,
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
@@ -308,7 +308,7 @@ Executable sum-liouville
     build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
     cpp-options:     -DSTARTUP_MPI
   else
-    build-depends:   network-multicast >= 0.0.7 && < 0.1
+    build-depends:   network-multicast >= 0.0.7 && < 0.2
     cpp-options:     -DSTARTUP_UDP
 
 Executable mandel
@@ -318,7 +318,7 @@ Executable mandel
                    base >= 4 && < 5,
                    binary >= 0.7 && <0.8,
                    cereal == 0.4.*,
-                   clock >= 0.4.1 && < 0.5,
+                   clock >= 0.4.1 && < 0.6,
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
                    deepseq >= 1.1 && < 2,
@@ -344,5 +344,5 @@ Executable mandel
     build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
     cpp-options:     -DSTARTUP_MPI
   else
-    build-depends:   network-multicast >= 0.0.7 && < 0.1
+    build-depends:   network-multicast >= 0.0.7 && < 0.2
     cpp-options:     -DSTARTUP_UDP
