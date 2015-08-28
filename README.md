@@ -63,6 +63,28 @@ installer with the paths to MPI libraries and includes, see
 `hdph-mpi-allgather/README.md` for examples; the package has been
 built successfully with recent OpenMPI and MPICH libraries.
 
+Building With Stack
+-------------------
+
+HdpH now supports the building using stack [6]. Building should be as simple as:
+
+> stack setup #Get an updated GHC if required.
+> stack build #Build hdph
+
+The first time you run stack build it will cache the required
+packages. This might take some time.
+
+The executables from HdpH can be found within:
+
+> ./.stack-work/install/x86_64-linux/lts-3.2/7.10.2/bin/
+
+or installed into the stack binary folder using:
+
+> stack install
+
+*Note: * Currently you must use the git version of stack (commit later
+ than: 603c7916d02) due to a stack bug. This should be fixed in the
+ next release.
 
 Disclaimer
 ----------
@@ -101,3 +123,5 @@ References
 
 5.  Vincent Driessen.
     [A successful Git branching model](http://nvie.com/posts/a-successful-git-branching-model/)
+
+6.  [Stack Tool](https://github.com/commercialhaskell/stack
