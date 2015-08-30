@@ -63,12 +63,6 @@ import Control.Parallel.HdpH.Internal.Topology (Bases, equiDistMap)
 import Control.Parallel.HdpH.Internal.Type.Comm
        (State(..), Payload, PayloadQ, ConnCache)
 import Control.Parallel.HdpH.Internal.State.Comm (stateRef)
-#if defined(STARTUP_MPI)
-import Control.Parallel.HdpH.Internal.CommStartupMPI
-       (defaultAllgatherByteStrings)
-#elif defined(STARTUP_UDP)
-import Control.Parallel.HdpH.Internal.CommStartupUDP (defaultAllgatherByteStrings)
-#endif
 import Control.Parallel.HdpH.Internal.CommStartupUDP (startupUDP)
 import Control.Parallel.HdpH.Internal.CommStartupTCP (startupTCP)
 

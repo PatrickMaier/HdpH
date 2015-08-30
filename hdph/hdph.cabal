@@ -15,12 +15,6 @@ category:      Control, Parallelism, Distributed Computing, Monads
 tested-with:   GHC == 7.6.3 || == 7.8.2
 build-type:    Simple
 cabal-version: >= 1.8
-
-Flag WithMPI
-  description:     Use MPI startup instead of UDP startup.
-  default:         False
-  manual:          True
-
 Library
   exposed-modules: Control.Parallel.HdpH,
                    Control.Parallel.HdpH.Conf,
@@ -28,6 +22,7 @@ Library
                    Control.Parallel.HdpH.Strategies
   other-modules:   Control.Parallel.HdpH.Internal.Comm,
                    Control.Parallel.HdpH.Internal.CommStartupTCP,
+                   Control.Parallel.HdpH.Internal.CommStartupUDP,
                    Control.Parallel.HdpH.Internal.Data.CacheMap.Strict,
                    Control.Parallel.HdpH.Internal.Data.Deque,
                    Control.Parallel.HdpH.Internal.Data.DistMap,
@@ -58,6 +53,7 @@ Library
                    mtl >= 2 && < 3,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
+                   network-multicast >= 0.0.7 && < 0.2,
                    network-transport == 0.4.*,
                    network-transport-tcp == 0.4.*,
                    random >= 1 && < 2,
@@ -67,14 +63,6 @@ Library
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall
-  if flag(WithMPI)
-    other-modules:   Control.Parallel.HdpH.Internal.CommStartupMPI
-    build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
-    cpp-options:     -DSTARTUP_MPI
-  else
-    other-modules:   Control.Parallel.HdpH.Internal.CommStartupUDP
-    build-depends:   network-multicast >= 0.0.7 && < 0.2
-    cpp-options:     -DSTARTUP_UDP
 
 Executable hello
   main-is:         Test/HdpH/hello.hs
@@ -89,6 +77,7 @@ Executable hello
                    mtl >= 2 && < 3,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
+                   network-multicast >= 0.0.7 && < 0.2,
                    network-transport == 0.4.*,
                    network-transport-tcp == 0.4.*,
                    random >= 1 && < 2,
@@ -98,12 +87,6 @@ Executable hello
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
-  if flag(WithMPI)
-    build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
-    cpp-options:     -DSTARTUP_MPI
-  else
-    build-depends:   network-multicast >= 0.0.7 && < 0.2
-    cpp-options:     -DSTARTUP_UDP
 
 Executable dist
   main-is:         Test/HdpH/dist.hs
@@ -118,6 +101,7 @@ Executable dist
                    mtl >= 2 && < 3,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
+                   network-multicast >= 0.0.7 && < 0.2,
                    network-transport == 0.4.*,
                    network-transport-tcp == 0.4.*,
                    random >= 1 && < 2,
@@ -127,12 +111,7 @@ Executable dist
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
-  if flag(WithMPI)
-    build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
-    cpp-options:     -DSTARTUP_MPI
-  else
-    build-depends:   network-multicast >= 0.0.7 && < 0.2
-    cpp-options:     -DSTARTUP_UDP
+
 
 Executable fib
   main-is:         Test/HdpH/fib.hs
@@ -147,6 +126,7 @@ Executable fib
                    mtl >= 2 && < 3,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
+                   network-multicast >= 0.0.7 && < 0.2,
                    network-transport == 0.4.*,
                    network-transport-tcp == 0.4.*,
                    random >= 1 && < 2,
@@ -156,12 +136,6 @@ Executable fib
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
-  if flag(WithMPI)
-    build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
-    cpp-options:     -DSTARTUP_MPI
-  else
-    build-depends:   network-multicast >= 0.0.7 && < 0.2
-    cpp-options:     -DSTARTUP_UDP
 
 Executable sumeuler
   main-is:         Test/HdpH/sumeuler.hs
@@ -176,6 +150,7 @@ Executable sumeuler
                    mtl >= 2 && < 3,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
+                   network-multicast >= 0.0.7 && < 0.2,
                    network-transport == 0.4.*,
                    network-transport-tcp == 0.4.*,
                    random >= 1 && < 2,
@@ -185,12 +160,7 @@ Executable sumeuler
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
-  if flag(WithMPI)
-    build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
-    cpp-options:     -DSTARTUP_MPI
-  else
-    build-depends:   network-multicast >= 0.0.7 && < 0.2
-    cpp-options:     -DSTARTUP_UDP
+
 
 Executable sumeuler-2level
   main-is:         Test/HdpH/sumeuler-2level.hs
@@ -205,6 +175,7 @@ Executable sumeuler-2level
                    mtl >= 2 && < 3,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
+                   network-multicast >= 0.0.7 && < 0.2,
                    network-transport == 0.4.*,
                    network-transport-tcp == 0.4.*,
                    random >= 1 && < 2,
@@ -214,12 +185,6 @@ Executable sumeuler-2level
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
-  if flag(WithMPI)
-    build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
-    cpp-options:     -DSTARTUP_MPI
-  else
-    build-depends:   network-multicast >= 0.0.7 && < 0.2
-    cpp-options:     -DSTARTUP_UDP
 
 Executable queens
   main-is:         Test/HdpH/queens.hs
@@ -234,6 +199,7 @@ Executable queens
                    mtl >= 2 && < 3,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
+                   network-multicast >= 0.0.7 && < 0.2,
                    network-transport == 0.4.*,
                    network-transport-tcp == 0.4.*,
                    random >= 1 && < 2,
@@ -243,12 +209,6 @@ Executable queens
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
-  if flag(WithMPI)
-    build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
-    cpp-options:     -DSTARTUP_MPI
-  else
-    build-depends:   network-multicast >= 0.0.7 && < 0.2
-    cpp-options:     -DSTARTUP_UDP
 
 Executable nbody
   main-is:         Test/HdpH/nbody.hs
@@ -263,6 +223,7 @@ Executable nbody
                    mtl >= 2 && < 3,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
+                   network-multicast >= 0.0.7 && < 0.2,
                    network-transport == 0.4.*,
                    network-transport-tcp == 0.4.*,
                    random >= 1 && < 2,
@@ -272,12 +233,6 @@ Executable nbody
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
-  if flag(WithMPI)
-    build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
-    cpp-options:     -DSTARTUP_MPI
-  else
-    build-depends:   network-multicast >= 0.0.7 && < 0.2
-    cpp-options:     -DSTARTUP_UDP
 
 Executable sum-liouville
   main-is:         Test/HdpH/sum-liouville.hs
@@ -293,6 +248,7 @@ Executable sum-liouville
                    mtl >= 2 && < 3,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
+                   network-multicast >= 0.0.7 && < 0.2,
                    network-transport == 0.4.*,
                    network-transport-tcp == 0.4.*,
                    random >= 1 && < 2,
@@ -304,12 +260,6 @@ Executable sum-liouville
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
-  if flag(WithMPI)
-    build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
-    cpp-options:     -DSTARTUP_MPI
-  else
-    build-depends:   network-multicast >= 0.0.7 && < 0.2
-    cpp-options:     -DSTARTUP_UDP
 
 Executable mandel
   main-is:         Test/HdpH/mandel.hs
@@ -328,6 +278,7 @@ Executable mandel
                    monad-par-extras >= 0.3 && < 0.4,
                    network >= 2.4 && < 2.7,
                    network-info == 0.2.*,
+                   network-multicast >= 0.0.7 && < 0.2,
                    network-transport == 0.4.*,
                    network-transport-tcp == 0.4.*,
                    random >= 1 && < 2,
@@ -340,9 +291,3 @@ Executable mandel
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
-  if flag(WithMPI)
-    build-depends:   hdph-mpi-allgather >= 0.0.1 && < 0.1
-    cpp-options:     -DSTARTUP_MPI
-  else
-    build-depends:   network-multicast >= 0.0.7 && < 0.2
-    cpp-options:     -DSTARTUP_UDP
