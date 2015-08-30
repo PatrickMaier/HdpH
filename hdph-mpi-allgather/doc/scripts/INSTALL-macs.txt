@@ -1,8 +1,0 @@
-## INSTALLING hdph-mpi-allgather on MACS Beowulf cluster
-##
-## Requires: cabal, ghc, mpiexec on $PATH
-##
-
-cabal sandbox init
-cabal install hdph-mpi-allgather-*.tar.gz --flags=BuildTest --flags=LibMPICH --extra-include-dirs=/usr/include/mpich-$ARCH --extra-lib-dirs=/usr/lib64/mpich/lib
-LD_LIBRARY_PATH=/usr/lib64/mpich/lib /usr/lib64/mpich/bin/mpiexec -hosts bwlf02,bwlf03,bwlf04,bwlf05 -n 400 .cabal-sandbox/bin/TestAllgather

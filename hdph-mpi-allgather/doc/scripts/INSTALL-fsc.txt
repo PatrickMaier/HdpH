@@ -1,8 +1,0 @@
-## INSTALLING hdph-mpi-allgather on FSC
-##
-## Requires: cabal, ghc, mpiexec on $PATH
-##
-
-cabal sandbox init
-cabal install hdph-mpi-allgather-*.tar.gz --flags=BuildTest --flags=LibOpenMPI --extra-include-dirs=$HOMESW/openmpi/include --extra-lib-dirs=$HOMESW/openmpi/lib
-LD_LIBRARY_PATH=$HOMESW/openmpi/lib mpiexec -n 100 .cabal-sandbox/bin/TestAllgather

@@ -1,8 +1,0 @@
-## INSTALLING hdph-mpi-allgather on Glasgow DCS Beowulf cluster
-##
-## Requires: cabal, ghc, mpiexec on $PATH
-##
-
-cabal sandbox init
-cabal install hdph-mpi-allgather-*.tar.gz --flags=BuildTest --flags=LibMPICH --extra-include-dirs=$HOMESW/mpich/3.1/$ARCH/include --extra-lib-dirs=$HOMESW/mpich/3.1/$ARCH/lib
-LD_LIBRARY_PATH=$HOMESW/mpich/3.1/$ARCH/lib mpiexec -hosts gpgnode-01,gpgnode-02 -n 400 .cabal-sandbox/bin/TestAllgather
