@@ -1,6 +1,4 @@
 flags:
-  hdph:
-    withmpi: false
   hdph-closure:
     buildtest: false
 packages:
