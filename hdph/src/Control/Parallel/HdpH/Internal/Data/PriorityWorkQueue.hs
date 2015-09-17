@@ -10,10 +10,14 @@ module Control.Parallel.HdpH.Internal.Data.PriorityWorkQueue
     , WorkQueueIO
     , enqueueTaskIO
     , dequeueTaskIO
+    , emptyIO
+    , sizeIO
     ) where
 
-import Data.IORef (IORef, newIORef, readIORef, atomicModifyIORef)
-import Data.PQueue.Prio.Max (MaxPQueue, insert, maxView)
+import           Control.Applicative  ((<$>))
+import           Data.IORef           (IORef, atomicModifyIORef, newIORef,
+                                       readIORef)
+import           Data.PQueue.Prio.Max (MaxPQueue, empty, insert, maxView, size)
 
 type Priority = Int
 type WorkQueue a = MaxPQueue Priority a
@@ -38,3 +42,9 @@ dequeueTaskIO (WorkQueueIO qRef) =
   atomicModifyIORef qRef $ \q -> case dequeueTask q of
                                    Just (a,q') -> (q', Just a)
                                    Nothing     -> (q , Nothing)
+
+emptyIO :: IO (WorkQueueIO a)
+emptyIO = WorkQueueIO <$> newIORef empty
+
+sizeIO :: WorkQueueIO a -> IO Int
+sizeIO (WorkQueueIO qref) = size <$> readIORef qref

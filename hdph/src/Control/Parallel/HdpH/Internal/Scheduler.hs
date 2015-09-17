@@ -49,8 +49,7 @@ import Control.Parallel.HdpH.Internal.Misc
        (encodeLazy, decodeLazy, ActionServer, newServer, killServer)
 import Control.Parallel.HdpH.Internal.Sparkpool
        (SparkM, blockSched, getLocalSpark, Msg(TERM,PUSH), dispatch,
-        readFishSentCtr, readSparkRcvdCtr, readSparkGenCtr,
-        readMaxSparkCtrs)
+        readFishSentCtr, readSparkRcvdCtr, readSparkGenCtr)
 import qualified Control.Parallel.HdpH.Internal.Sparkpool as Sparkpool (run)
 import Control.Parallel.HdpH.Internal.Threadpool
        (ThreadM, poolID, forkThreadM, stealThread, readMaxThreadCtrs)
@@ -326,10 +325,10 @@ printFinalStats = do
   fishes       <- liftSparkM $ readFishSentCtr
   schedules    <- liftSparkM $ readSparkRcvdCtr
   sparks       <- liftSparkM $ readSparkGenCtr
-  max_sparks   <- liftSparkM $ readMaxSparkCtrs
+  -- max_sparks   <- liftSparkM $ readMaxSparkCtrs
   maxs_threads <- liftThreadM $ readMaxThreadCtrs
   debug dbgStats $ "#SPARK=" ++ show sparks ++ "   " ++
-                   "max_SPARK=" ++ show max_sparks ++ "   " ++
+                   --"max_SPARK=" ++ show max_sparks ++ "   " ++
                    "max_THREAD=" ++ show maxs_threads
   debug dbgStats $ "#FISH_sent=" ++ show fishes ++ "   " ++
                    "#SCHED_rcvd=" ++ show schedules

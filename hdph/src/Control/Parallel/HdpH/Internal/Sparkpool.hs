@@ -33,8 +33,9 @@ module Control.Parallel.HdpH.Internal.Sparkpool
     readPoolSize,      -- :: Dist -> SparkM m Int
     readFishSentCtr,   -- :: SparkM m Int
     readSparkRcvdCtr,  -- :: SparkM m Int
-    readMaxSparkCtr,   -- :: Dist -> SparkM m Int
-    readMaxSparkCtrs,  -- :: SparkM m [Int]
+    -- Currently unsupported by priority queue implementation
+    -- readMaxSparkCtr,   -- :: Dist -> SparkM m Int
+    -- readMaxSparkCtrs,  -- :: SparkM m [Int]
     readSparkGenCtr,   -- :: SparkM m Int
     readSparkConvCtr   -- :: SparkM m Int
   ) where
@@ -67,9 +68,10 @@ import Control.Parallel.HdpH.Conf
 import Control.Parallel.HdpH.Dist (Dist, zero, one, mul2, div2)
 import qualified Control.Parallel.HdpH.Internal.Comm as Comm
        (send, nodes, myNode, equiDistBases)
-import Control.Parallel.HdpH.Internal.Data.Deque
-       (DequeIO, emptyIO, pushBackIO, popFrontIO, popBackIO,
-        lengthIO, maxLengthIO)
+
+import Control.Parallel.HdpH.Internal.Data.PriorityWorkQueue
+       (WorkQueueIO, Priority, enqueueTaskIO, dequeueTaskIO, emptyIO, sizeIO)
+
 import Control.Parallel.HdpH.Internal.Data.DistMap (DistMap)
 import qualified Control.Parallel.HdpH.Internal.Data.DistMap as DistMap
        (new, toDescList, lookup, keys, minDist)
@@ -96,7 +98,7 @@ type SparkM m = ReaderT (State m) IO
 data State m =
   State {
     s_conf       :: RTSConf,               -- config data
-    s_pools      :: DistMap (DequeIO (Spark m)),  -- actual spark pools
+    s_pools      :: DistMap (WorkQueueIO (Spark m)),  -- actual spark pools
     s_sparkOrig  :: IORef (Maybe Node),    -- primary FISH target (recent src)
     s_fishing    :: IORef Bool,            -- True iff FISH outstanding
     s_noWork     :: ActionServer,          -- for clearing "FISH outstndg" flag
@@ -143,11 +145,11 @@ liftIO = lift
 -----------------------------------------------------------------------------
 -- access to state
 
-getPool :: Dist -> SparkM m (DequeIO (Spark m))
+getPool :: Dist -> SparkM m (WorkQueueIO (Spark m))
 getPool r = DistMap.lookup r . s_pools <$> ask
 
 readPoolSize :: Dist -> SparkM m Int
-readPoolSize r = getPool r >>= liftIO . lengthIO
+readPoolSize r = getPool r >>= liftIO . sizeIO
 
 getSparkOrigHist :: SparkM m (IORef (Maybe Node))
 getSparkOrigHist = s_sparkOrig <$> ask
@@ -203,11 +205,13 @@ getSparkConvCtr = s_sparkConv <$> ask
 readSparkConvCtr :: SparkM m Int
 readSparkConvCtr = getSparkConvCtr >>= readCtr
 
-readMaxSparkCtr :: Dist -> SparkM m Int
-readMaxSparkCtr r = getPool r >>= liftIO . maxLengthIO
+-- Currently Unsupported by the priority queue
 
-readMaxSparkCtrs :: SparkM m [Int]
-readMaxSparkCtrs = liftIO getDistsIO >>= mapM readMaxSparkCtr
+-- readMaxSparkCtr :: Dist -> SparkM m Int
+-- readMaxSparkCtr r = getPool r >>= liftIO . maxLengthIO
+
+-- readMaxSparkCtrs :: SparkM m [Int]
+-- readMaxSparkCtrs = liftIO getDistsIO >>= mapM readMaxSparkCtr
 
 getMaxHops :: SparkM m Int
 getMaxHops = maxHops <$> s_conf <$> ask
@@ -263,7 +267,7 @@ wakeupSched n = getIdleSchedsSem >>= liftIO . replicateM_ n . Sem.signal
 selectLocalSpark :: Int -> Dist -> SparkM m (Maybe (Spark m, Dist))
 selectLocalSpark schedID !r = do
   pool <- getPool r
-  maybe_spark <- liftIO $ popBackIO pool
+  maybe_spark <- liftIO $ dequeueTaskIO pool
   case maybe_spark of
     Just spark          -> return $ Just (spark, r)          -- return spark
     Nothing | r == one  -> return Nothing                    -- pools empty
@@ -285,7 +289,7 @@ selectRemoteSpark _schedID r0 = do
         pickRemoteSpark :: Dist -> SparkM m (Maybe (Spark m, Dist))
         pickRemoteSpark !r = do
           pool <- getPool r
-          maybe_spark <- liftIO $ popFrontIO pool
+          maybe_spark <- liftIO $ dequeueTaskIO pool
           case maybe_spark of
             Just spark          -> return $ Just (spark, r)  -- return spark
             Nothing | r == one  -> return Nothing            -- pools empty
@@ -302,7 +306,7 @@ maySCHEDULE = do
       checkPools :: Dist -> Int -> Dist -> SparkM m Bool
       checkPools r_min !min_sparks !r = do
         pool <- getPool r
-        sparks <- liftIO $ lengthIO pool
+        sparks <- liftIO $ sizeIO pool
         let min_sparks' = min_sparks - sparks
         if min_sparks' <= 0
           then return True
@@ -343,7 +347,8 @@ getLocalSpark schedID = do
 putLocalSpark :: Int -> Dist -> Spark m -> SparkM m ()
 putLocalSpark _schedID r spark = do
   pool <- getPool r
-  liftIO $ pushBackIO pool spark
+  --Min Priority for tasks put in this method
+  liftIO $ enqueueTaskIO pool 0 spark 
   wakeupSched 1
   getSparkGenCtr >>= incCtr
   debug dbgSpark $
@@ -356,7 +361,8 @@ putLocalSpark _schedID r spark = do
 putRemoteSpark :: Int -> Dist -> Spark m -> SparkM m ()
 putRemoteSpark _schedID r spark = do
   pool <- getPool r
-  liftIO $ pushBackIO pool spark
+  --Min Priority for tasks put in this method
+  liftIO $ enqueueTaskIO pool 0 spark
   wakeupSched 1
   getSparkRcvdCtr >>= incCtr
 
@@ -487,7 +493,7 @@ goFISHing r_min = do
             checkPools :: Int -> Dist -> SparkM m Bool
             checkPools min_sparks r = do
               pool <- getPool r
-              sparks <- liftIO $ lengthIO pool
+              sparks <- liftIO $ sizeIO pool
               let min_sparks' = min_sparks - sparks
               if min_sparks' < 0
                 then return True
