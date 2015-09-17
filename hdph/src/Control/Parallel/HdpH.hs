@@ -5,6 +5,7 @@
 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}  -- for 'GIVar' and 'Node'
 {-# LANGUAGE FlexibleInstances #-}           -- for some 'ToClosure' instances
+
 {-# LANGUAGE TemplateHaskell #-}             -- for 'mkClosure', etc.
 
 module Control.Parallel.HdpH
@@ -31,9 +32,13 @@ module Control.Parallel.HdpH
     forkHi,    -- :: Par () -> Par ()
     fork,      -- :: Par () -> Par ()
     spark,     -- :: Dist -> Closure (Par ()) -> Par ()
+    -- :: Dist -> Priority -> Closure (Par ()) -> Par ()
+    sparkWithPrio,
     pushTo,    -- :: Closure (Par ()) -> Node -> Par ()
     spawn,     -- :: Dist -> Closure (Par (Closure a)) -> Par (IVar (Closure a))
     spawnAt,   -- :: Node -> Closure (Par (Closure a)) -> Par (IVar (Closure a))
+    -- :: Dist -> Priority -> Closure (Par (Closure a)) -> Par (IVar (Closure a))
+    spawnWithPrio,
     new,       -- :: Par (IVar a)
     put,       -- :: IVar a -> a -> Par ()
     get,       -- :: IVar a -> Par a
@@ -96,11 +101,12 @@ import Control.Parallel.HdpH.Internal.Scheduler
        (RTS, liftThreadM, liftSparkM, liftIO,
         forkStub, schedulerID, mkThread, execThread, sendPUSH)
 import qualified Control.Parallel.HdpH.Internal.Scheduler as Scheduler (run_)
-import Control.Parallel.HdpH.Internal.Sparkpool (putLocalSpark)
+import Control.Parallel.HdpH.Internal.Sparkpool (putLocalSpark,
+                                                 putLocalSparkWithPrio)
 import Control.Parallel.HdpH.Internal.Threadpool (putThread, putThreads)
 import Control.Parallel.HdpH.Internal.Type.Par
        (ParM(Par), Thread(Atom), ThreadCont(ThreadCont, ThreadDone))
-
+import Control.Parallel.HdpH.Internal.Data.PriorityWorkQueue (Priority)
 
 -----------------------------------------------------------------------------
 -- $Intro
@@ -113,7 +119,7 @@ import Control.Parallel.HdpH.Internal.Type.Par
 -- IFL 2011.
 --
 -- HdpH executes programs written in a monadic embedded DSL for shared-
--- and distributed-memory parallelism.  
+-- and distributed-memory parallelism.
 -- HdpH operates a distributed runtime system, scheduling tasks
 -- either explicitly (controled by the DSL) or implicitly (by work stealing).
 -- The runtime system distinguishes between nodes and schedulers.
@@ -370,7 +376,7 @@ allNodesWithin r = do
 
 allNodesWithin_abs :: (Dist, GIVar (Closure [Node])) -> Thunk (Par ())
 allNodesWithin_abs (half_r, gv) = Thunk $ allNodesWithin half_r >>= rput gv
-              
+
 -- | Returns an equidistant basis of radius 'r' around the current node.
 --   By convention, the head of the list is the current node.
 equiDist :: Dist -> Par [(Node,Int)]
@@ -395,19 +401,32 @@ spark :: Dist -> Closure (Par ()) -> Par ()
 spark r clo = atom $ const $ schedulerID >>= \ i ->
                              liftSparkM $ putLocalSpark i r clo
 
+-- | Creates a new spark with the given priority
+sparkWithPrio :: Dist -> Priority -> Closure (Par ()) -> Par ()
+{-# INLINE sparkWithPrio #-}
+sparkWithPrio r p clo = atom $ const $
+  schedulerID >>= \ i -> liftSparkM $ putLocalSparkWithPrio i r p clo
+
 -- | Pushes a computation to the given node, where it is eagerly converted
 -- into a thread and executed.
 pushTo :: Closure (Par ()) -> Node -> Par ()
 {-# INLINE pushTo #-}
 pushTo clo (Node n) = atom $ const $ sendPUSH clo n
 
--- | Included for compatibility with PLDI paper; 
+-- | Included for compatibility with PLDI paper;
 --   Sparkpool should be redesigned to avoid use 'mkClosure' here
 spawn :: Dist -> Closure (Par (Closure a)) -> Par (IVar (Closure a))
-spawn r clo = do
-  v <- new
+spawn r clo = spawnWithPrio r 0 clo
+
+-- Spawn a task with a given priority
+spawnWithPrio :: Dist
+              -> Priority
+              -> Closure (Par (Closure a))
+              -> Par (IVar (Closure a))
+spawnWithPrio r p clo = do
+  v  <- new
   gv <- glob v
-  spark r $(mkClosure [| spawn_abs (clo, gv) |])
+  sparkWithPrio r p $(mkClosure [| spawn_abs (clo, gv) |])
   return v
 
 -- | Included for compatibility with PLDI paper;

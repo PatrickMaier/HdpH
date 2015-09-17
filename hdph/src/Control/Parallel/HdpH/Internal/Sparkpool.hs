@@ -19,6 +19,8 @@ module Control.Parallel.HdpH.Internal.Sparkpool
     -- * local (ie. scheduler) access to spark pool
     getLocalSpark,   -- :: Int -> SparkM m (Maybe (Spark m))
     putLocalSpark,   -- :: Int -> Dist -> Spark m -> SparkM m ()
+    -- :: Int -> Dist -> Priority -> Spark m -> SparkM m ()
+    putLocalSparkWithPrio,
 
     -- * messages
     Msg(..),         -- instances: Show, NFData, Serialize
@@ -177,7 +179,7 @@ getFishingFlag = s_fishing <$> ask
 
 getNoWorkServer :: SparkM m ActionServer
 getNoWorkServer = s_noWork <$> ask
-  
+
 getIdleSchedsSem :: SparkM m Sem
 getIdleSchedsSem = s_idleScheds <$> ask
 
@@ -345,10 +347,12 @@ getLocalSpark schedID = do
 -- 1 sleeping scheduler, and update stats (ie. count sparks generated locally);
 -- the scheduler ID argument may be used for logging.
 putLocalSpark :: Int -> Dist -> Spark m -> SparkM m ()
-putLocalSpark _schedID r spark = do
+putLocalSpark _schedID r spark = putLocalSparkWithPrio _schedID r 0 spark
+
+putLocalSparkWithPrio :: Int -> Dist -> Priority -> Spark m -> SparkM m ()
+putLocalSparkWithPrio _schedID r p spark = do
   pool <- getPool r
-  --Min Priority for tasks put in this method
-  liftIO $ enqueueTaskIO pool 0 spark 
+  liftIO $ enqueueTaskIO pool p spark
   wakeupSched 1
   getSparkGenCtr >>= incCtr
   debug dbgSpark $
@@ -395,7 +399,7 @@ data Msg m = TERM        -- termination message (broadcast from root and back)
 -- * At the thief, a FISH message is launched with empty sets 'avoid' and
 --   'sources', and at most 'maxHops' 'candidates'. As the message is being
 --   forwarded, the cardinality of the sets 'avoid', 'candidates' and 'sources'
---   combined will never exceeed 2 * 'maxHops' + 1. This should be kept in mind 
+--   combined will never exceeed 2 * 'maxHops' + 1. This should be kept in mind
 --   when choosing 'maxHops', to ensure that FISH messages stay small (ie. fit
 --   into one packet).
 
@@ -598,7 +602,7 @@ forwardFISH me (Just src) (FISH thief avoid candidates sources True)  =
                    else insertBy (comparing $ dist thief) src sources
 forwardFISH _ _ _ = error "panic in forwardFISH: not a FISH message"
 
--- Auxiliary function, called by 'forwardFISH'. 
+-- Auxiliary function, called by 'forwardFISH'.
 -- Extracts target and message from preliminary FISH message.
 dispatchFISH :: Msg m -> (Node, Msg m)
 dispatchFISH (FISH thief avoid' candidates sources' _) =
