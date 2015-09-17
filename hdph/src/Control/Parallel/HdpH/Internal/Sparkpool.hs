@@ -266,12 +266,12 @@ wakeupSched n = getIdleSchedsSem >>= liftIO . replicateM_ n . Sem.signal
 -- Local spark selection policy (pick sparks from back of queue),
 -- starting from radius 'r' and and rippling outwords;
 -- the scheduler ID may be used for logging.
-selectLocalSpark :: Int -> Dist -> SparkM m (Maybe (Spark m, Dist))
+selectLocalSpark :: Int -> Dist -> SparkM m (Maybe (Spark m, Dist, Priority))
 selectLocalSpark schedID !r = do
   pool <- getPool r
   maybe_spark <- liftIO $ dequeueTaskIO pool
   case maybe_spark of
-    Just spark          -> return $ Just (spark, r)          -- return spark
+    Just (p, spark)     -> return $ Just (spark, r, p)       -- return spark
     Nothing | r == one  -> return Nothing                    -- pools empty
             | otherwise -> selectLocalSpark schedID (mul2 r) -- ripple out
 
@@ -281,19 +281,19 @@ selectLocalSpark schedID !r = do
 -- hold at least 'minSched' sparks in total;
 -- schedID (expected to be msg handler ID 0) may be used for logging.
 -- TODO: Track total number of sparks in pools more effectively.
-selectRemoteSpark :: Int -> Dist -> SparkM m (Maybe (Spark m, Dist))
+selectRemoteSpark :: Int -> Dist -> SparkM m (Maybe (Spark m, Dist, Priority))
 selectRemoteSpark _schedID r0 = do
   may <- maySCHEDULE
   if may
     then pickRemoteSpark r0
     else return Nothing
       where
-        pickRemoteSpark :: Dist -> SparkM m (Maybe (Spark m, Dist))
+        pickRemoteSpark :: Dist -> SparkM m (Maybe (Spark m, Dist, Priority))
         pickRemoteSpark !r = do
           pool <- getPool r
           maybe_spark <- liftIO $ dequeueTaskIO pool
           case maybe_spark of
-            Just spark          -> return $ Just (spark, r)  -- return spark
+            Just (p,spark)      -> return $ Just (spark, r, p)  -- return spark
             Nothing | r == one  -> return Nothing            -- pools empty
                     | otherwise -> pickRemoteSpark (mul2 r)  -- ripple out
 
@@ -332,7 +332,7 @@ getLocalSpark schedID = do
     Nothing         -> do
       sendFISH zero
       return Nothing
-    Just (spark, r) -> do
+    Just (spark, r, p) -> do
       useLowWatermark <- useLowWatermarkOptimisation <$> s_conf <$> ask
       when useLowWatermark $ sendFISH r
 
@@ -363,13 +363,14 @@ putLocalSparkWithPrio _schedID r p spark = do
 -- 1 sleeping scheduler, and update stats (ie. count sparks received);
 -- schedID (expected to be msg handler ID 0) may be used for logging.
 putRemoteSpark :: Int -> Dist -> Spark m -> SparkM m ()
-putRemoteSpark _schedID r spark = do
+putRemoteSpark _schedID r spark = putRemoteSparkWithPrio _schedID r 0 spark
+
+putRemoteSparkWithPrio :: Int -> Dist -> Priority -> Spark m -> SparkM m ()
+putRemoteSparkWithPrio _schedID r p spark = do
   pool <- getPool r
-  --Min Priority for tasks put in this method
-  liftIO $ enqueueTaskIO pool 0 spark
+  liftIO $ enqueueTaskIO pool p spark
   wakeupSched 1
   getSparkRcvdCtr >>= incCtr
-
 
 -----------------------------------------------------------------------------
 -- HdpH messages (peer to peer)
@@ -387,6 +388,7 @@ data Msg m = TERM        -- termination message (broadcast from root and back)
            | SCHEDULE    -- reply to thief's FISH (when there is work)
                (Spark m)   -- spark
                !Dist       -- spark's radius
+               !Priority   -- spark's priority
                !Node       -- victim
            | PUSH        -- eagerly pushing work
                (Spark m)   -- spark
@@ -415,10 +417,12 @@ instance Show (Msg m) where
                                            showString "," . shows fwd .
                                            showString ")"
   showsPrec _ (NOWORK)                   = showString "NOWORK"
-  showsPrec _ (SCHEDULE _spark r victim) = showString "SCHEDULE(_," . shows r .
-                                           showString "," . shows victim .
-                                           showString ")"
-  showsPrec _ (PUSH _spark)              = showString "PUSH(_)"
+  showsPrec _ (SCHEDULE _spark r p victim)
+                                        = showString "SCHEDULE(_," . shows r .
+                                          showString "," . shows p.
+                                          showString "," . shows victim .
+                                          showString ")"
+  showsPrec _ (PUSH _spark)             = showString "PUSH(_)"
 
 
 instance NFData (Msg m) where
@@ -427,7 +431,7 @@ instance NFData (Msg m) where
                                                     rnf candidates `seq`
                                                     rnf sources
   rnf (NOWORK)                                    = ()
-  rnf (SCHEDULE spark _r _victim)                 = rnf spark
+  rnf (SCHEDULE spark _r _p _victim)              = rnf spark
   rnf (PUSH spark)                                = rnf spark
 
 
@@ -443,9 +447,11 @@ instance Serialize (Msg m) where
                                   Data.Serialize.put sources >>
                                   Data.Serialize.put fwd
   put (NOWORK)                  = Data.Serialize.put (2 :: Word8)
-  put (SCHEDULE spark r victim) = Data.Serialize.put (3 :: Word8) >>
+  put (SCHEDULE spark r p victim)
+                                = Data.Serialize.put (3 :: Word8) >>
                                   Data.Serialize.put spark >>
                                   Data.Serialize.put r >>
+                                  Data.Serialize.put p >>
                                   Data.Serialize.put victim
   put (PUSH spark)              = Data.Serialize.put (4 :: Word8) >>
                                   Data.Serialize.put spark
@@ -463,8 +469,9 @@ instance Serialize (Msg m) where
              2 -> do return $ NOWORK
              3 -> do spark  <- Data.Serialize.get
                      r      <- Data.Serialize.get
+                     p      <- Data.Serialize.get
                      victim <- Data.Serialize.get
-                     return $ SCHEDULE spark r victim
+                     return $ SCHEDULE spark r p victim
              4 -> do spark  <- Data.Serialize.get
                      return $ PUSH spark
              _ -> error "panic in instance Serialize (Msg m): tag out of range"
@@ -556,7 +563,7 @@ randomCandidates n = do
 -- Dispatch FISH, SCHEDULE and NOWORK messages to their respective handlers.
 dispatch :: Msg m -> SparkM m ()
 dispatch msg@(FISH _ _ _ _ _)   = handleFISH msg
-dispatch msg@(SCHEDULE _ _ _)   = handleSCHEDULE msg
+dispatch msg@(SCHEDULE _ _ _ _)   = handleSCHEDULE msg
 dispatch msg@(NOWORK)           = handleNOWORK msg
 dispatch msg = error $ "HdpH.Internal.Sparkpool.dispatch: " ++
                        show msg ++ " unexpected"
@@ -571,8 +578,8 @@ handleFISH msg@(FISH thief _avoid _candidates _sources _fwd) = do
   me <- liftIO Comm.myNode
   maybe_spark <- selectRemoteSpark 0 (dist thief me)
   case maybe_spark of
-    Just (spark, r) -> do -- compose and send SCHEDULE
-      let scheduleMsg = SCHEDULE spark r me
+    Just (spark, r, prio) -> do -- compose and send SCHEDULE
+      let scheduleMsg = SCHEDULE spark r prio me
       debug dbgMsgSend $ let msg_size = BS.length (encodeLazy scheduleMsg) in
         show scheduleMsg ++ " ->> " ++ show thief ++ " Length: " ++ show msg_size
       liftIO $ Comm.send thief $ encodeLazy scheduleMsg
@@ -625,9 +632,9 @@ dispatchFISH _ = error "panic in dispatchFISH: not a FISH message"
 -- * records spark sender and updates stats, and
 -- * clears the "FISH outstanding" flag.
 handleSCHEDULE :: Msg m -> SparkM m ()
-handleSCHEDULE (SCHEDULE spark r victim) = do
+handleSCHEDULE (SCHEDULE spark r p victim) = do
   -- put spark into pool, wakeup scheduler and update stats
-  putRemoteSpark 0 r spark
+  putRemoteSparkWithPrio 0 r p spark
   -- record source of spark
   setSparkOrigHist victim
   -- clear FISHING flag

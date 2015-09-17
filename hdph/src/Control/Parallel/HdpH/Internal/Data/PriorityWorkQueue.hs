@@ -17,16 +17,16 @@ module Control.Parallel.HdpH.Internal.Data.PriorityWorkQueue
 import           Control.Applicative  ((<$>))
 import           Data.IORef           (IORef, atomicModifyIORef, newIORef,
                                        readIORef)
-import           Data.PQueue.Prio.Max (MaxPQueue, empty, insert, maxView, size)
+import           Data.PQueue.Prio.Max (MaxPQueue, empty, insert, maxViewWithKey,
+                                       size)
 
 type Priority = Int
 type WorkQueue a = MaxPQueue Priority a
-
 enqueueTask :: WorkQueue a -> Priority -> a -> WorkQueue a
 enqueueTask q p x = insert p x q
 
-dequeueTask :: WorkQueue a -> Maybe (a, WorkQueue a)
-dequeueTask = maxView
+dequeueTask :: WorkQueue a -> Maybe ((Priority, a), WorkQueue a)
+dequeueTask = maxViewWithKey
 
 ---------------------------------------------------------------------
 -- concurrently accessible version of the WorkQueue (in the IO monad)
@@ -37,7 +37,7 @@ enqueueTaskIO :: WorkQueueIO a -> Priority -> a -> IO ()
 enqueueTaskIO (WorkQueueIO qRef) p x =
   atomicModifyIORef qRef $ \q -> (enqueueTask q p x, ())
 
-dequeueTaskIO :: WorkQueueIO a -> IO (Maybe a)
+dequeueTaskIO :: WorkQueueIO a -> IO (Maybe (Priority, a))
 dequeueTaskIO (WorkQueueIO qRef) =
   atomicModifyIORef qRef $ \q -> case dequeueTask q of
                                    Just (a,q') -> (q', Just a)
