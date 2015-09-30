@@ -30,9 +30,6 @@ module Control.Parallel.HdpH.Closure
     -- ** The Closure type constructor
     Closure,
 
-    -- ** Closure dictionary type constructor    
-    CDict,
-
     -- ** Type constructor marking return type of environment abstractions
     Thunk(Thunk),
 
@@ -56,18 +53,12 @@ module Control.Parallel.HdpH.Closure
     -- | A /value Closure/ is a Closure, which when eliminated (from a
     -- serialised representation, at least) yields an evaluated value
     -- (rather than an unevaluated thunk).
+    ToClosure,
+    mkToClosure,
     toClosure,
-    ToClosure(
-      locToClosure
-    ),
-    StaticToClosure,
-    staticToClosure,
 
     -- ** Safe Closure construction
     mkClosure,
-    mkClosureLoc,
-    LocT,
-    here,
 
     -- * Static terms
     -- | A term @t@ is called /static/ if it could be declared at the toplevel.
@@ -83,12 +74,8 @@ module Control.Parallel.HdpH.Closure
     register,
     showStaticTable,
 
-    -- ** Static Closure dictionaries
-    -- | A @'Static'@ /closure dictionary/ is a term of type
-    -- @'Static' ('CDict' env a)@, for some type @a@ and (existentially
-    -- quantified) environment type @env@.
+    -- ** Static Closure environments
     static,
-    staticLoc,
 
     -- * This module's Static declaration
     declareStatic
@@ -98,186 +85,18 @@ module Control.Parallel.HdpH.Closure
   ) where
 
 import Prelude
-import Control.DeepSeq (NFData, deepseq)
+import Control.DeepSeq (NFData, deepseq, force)
+import Data.Binary (Binary)
+import Data.Constraint (Dict(Dict))
 import Data.Monoid (mconcat)
 import Data.Serialize (Serialize)
 
 import Control.Parallel.HdpH.Closure.Internal   -- re-export whole module
 import Control.Parallel.HdpH.Closure.Static
-       (Static, StaticDecl, declare, register, showStaticTable)
+       (Static, unstatic, StaticDecl, declare, register, showStaticTable)
 
 
------------------------------------------------------------------------------
--- $KeyFacts
---
--- An /explicit Closure/ is a term of type @Closure t@, wrapping a thunk
--- of type @t@. Henceforth, we will write /Closure/ (capitalised) to mean 
--- an explicit Closure, and /closure/ (in lower case) to mean an ordinary
--- Haskell closure (ie. a thunk).
---
--- The @'Closure'@ type constructor is abstract (see module
--- 'Control.Parallel.HdpH.Closure.Internal' for its internal representation).
---
--- The function @'unClosure'@ returns the thunk wrapped in a Closure.
---
--- Article [2] proposes a Closure construction macro @$(mkClosure [|...|])@
--- where the @...@ is an arbitrary thunk. Due to current limitations of the
--- GHC (namely missing support for the @'Static'@ type constructor),
--- this module provides only limited variants of @$(mkClosure [|...|])@.
--- The restrictions on the the thunk @...@ are
---
--- * either @...@ is a toplevel variable (also called a /static closure/),
---
--- * or @...@ is a toplevel variable (also called an /environment abstraction/)
---   applied to a tuple of local variables (the /environment/).
---
--- As a matter of nomenclature, functions operating on Closures will either
--- contain the string @Closure@ (like @'unClosure'@ and @'mkClosure'@) or will
--- end in the suffix @C@ (like the categorical operations @'idC'@ and
--- @'compC'@).
---
--- Some identities involving Closures:
---
--- (1) @unClosure $ toClosure x = x@
---
--- (2) @unClosure $(mkClosure [| stat_clo |]) = stat_clo@
---
--- (3) @unClosure $(mkClosure [| clo_abs free_vars |]) = clo_abs free_vars@
---
 
-
------------------------------------------------------------------------------
--- $Deserialisation
---
--- Deserialising a serialised value via the methods of class
--- @'Data.Binary.Binary'@ (or @'Data.Serialize.Serialize'@) is not type safe.
--- For instance, the compiler will happily assign type @Int -> Bool@ to
---
--- > decodeBool . encodeInt where
--- >     decodeBool = decode :: ByteString -> Bool
--- >     encodeInt  = encode :: Int -> ByteString
---
--- This type coercion will only fail at runtime, when (and if) the decoder for
--- @Bool@ stumbles over unexepected input values. Hence deserialising can be 
--- viewed as an assertion that the serialised byte string represents a value
--- of the type @decode@ expects to see. A well-written decoder will check
--- this assertion on deserialisation, and will abort with an error message
--- if the assertion fails.
---
--- HdpH treats Closure deserialisation similarly as an assertion that the
--- serialised byte string represents a value of the expected Closure type.
--- However, HdpH does not check whether the assertion holds. Instead it
--- subverts the type system via @unsafeCoerce@, with potentially disastrous
--- consequences (like seg faults) in cases where the assertion fails.
---
--- The up side of this design choice is a simpler Closure representation
--- without runtime type reflection.
--- The down side is that Closure deserialisation has to be treated with
--- /extreme care/.
--- HdpH, for instance, avoids the pitfalls of Closure deserialisation by
--- making sure only Closures of the fixed type @Closure (Par ())@ are
--- serialised and deserialised.
-
-
------------------------------------------------------------------------------
--- $Tutorial
---
--- This guide will demonstrate the construction of explicit Closures
--- in HdpH through a series of examples.
---
---
--- [Constructing plain Closures]
---
--- The first example is the definition of the Closure transformation
--- @apC@. It is defined in [2] (where it is called @mapClosure@) by eliminating
--- the Closures of its arguments, and constructing a new Closure of the the
--- resulting application, as follows:
---
--- > apC :: Closure (a -> b) -> Closure a -> Closure b
--- > apC clo_f clo_x =
--- >   $(mkClosure [|unClosure clo_f $ unClosure clo_x|])
---
--- If @'Static'@ were fully supported by GHC then @'mkClosure'@ would abstract
--- the free local variables (here @clo_f@ and @clo_x@) in its quoted argument,
--- serialise a tuple of these variables, and construct a suitable @'Static'@
--- dictionary. In short, expanding the above Template Haskell splice would
--- yield the following definition:
---
--- > apC clo_f clo_x =
--- >   let env = (clo_f, clo_x)
--- >       dict = mkCDict $ \ env -> let (clo_f, clo_x) = env
--- >                                 in unClosure clo_f $ unClosure clo_x
--- >     in Closure (static dict) env
---
--- However, the current implementation of @'mkClosure'@ cannot do this because
--- there is no term former @static@. Instead, the current implementation
--- of @'mkClosure'@ expects its quoted argument to be in a one of two special
--- forms: either it is a single /toplevel/ variable, or an application of a
--- /toplevel/ variable to a tuple of free variables. To distinguish the two
--- forms, Closures constructed from single toplevel variables will be called
--- /static/ (because like static terms they do not capture any variables).
---
--- Here is the definition of @apC@ as an example of how to construct a
--- general, non-static Closure.
---
--- > apC clo_f clo_x =
--- >   $(mkClosure [|apC_abs (clo_f, clo_x)|])
--- >
--- > apC_abs :: (Closure (a -> b), Closure a) -> Thunk b
--- > apC_abs (clo_f, clo_x) = Thunk (unClosure clo_f $ unClosure clo_x)
---
--- First, the programmer must manually define a toplevel
--- /environment abstraction/ @apC_abs@ which abstracts a tuple @(clo_f, clo_x)@
--- of free local variables occuring in the expression to be converted into a
--- Closure. Note that the return type/value of the environment abstraction must
--- be marked by the type/value constructor @Thunk@. (Usually, the programmer
--- would want the environment abstraction @apC_abs@ to be inlined.)
---
--- Second, the programmer constructs the explicit Closure via a Template
--- Haskell splice @$(mkClosure [|apC_abs (clo_f, clo_x)|])@, where the quoted 
--- expression @apC_abs (clo_f, clo_x)@ is an application of the toplevel
--- environment abstraction to a tuple of free local variables. It is important
--- that this actual tuple of variables matches /exactly/ the formal tuple
--- in the definition of the environment abstraction. In fact, best practice is
--- for the quoted expression to textually match the left-hand side of the
--- definition of the environment abstraction.
---
--- Finally, a @'Static'@ dictionary corresponding to the toplevel environment
--- abstraction must be declared. To this end, this module exports a Template
--- Haskell function @'static'@ which converts the name of a toplevel environment
--- abstraction into a @'Static'@ dictionary, and a function @'declare'@ which
--- turns the @'Static'@ dictionary into a @'Static'@ declaration. These
--- should be used as follows; see also the definition of @declareStatic@ below.
---
--- > declare $(static 'apC_abs)
---
---
--- The second example is the definition of the static Closure @idC@, which
--- lifts the identity function to a function Closure.
--- The definition is a follows; see also code towards the end of this file.
---
--- > idC :: Closure (a -> a)
--- > idC = $(mkClosure [|id|])
---
--- The expression to be converted into a Closure, the variable @'id'@, does not
--- contain any free local variables, so there is no need to abstract a tuple
--- of free variables. In fact, the expression is already a toplevel variable,
--- so there is no need to define a new toplevel environment abstraction either.
--- Thus, the programmer constructs the static Closure via the the Template
--- Haskell splice @$(mkClosure [|id|])@, where the quoted expression @'id'@
--- is a toplevel variable.
---
--- The programmer must also declare a @'Static'@ dictionary corresponding to
--- the toplevel variable of which the static Closure was created. This is done
--- as follows; see also the definition of @declareStatic@ below. 
---
--- > declare $(static 'id)
---
--- Note the absence of the type constructor @Thunk@ in the type of @id@;
--- this absence signals that @id@ is a /static/ closure, hence expects
--- no environment.
---
---
 -- [Constructing families of Closures]
 --
 -- A problem arises with Closures whose type is not only polymorphic (as eg.
@@ -431,153 +250,6 @@ import Control.Parallel.HdpH.Closure.Static
 -- > Data.Monoid.mconcat
 -- >   [declare (staticForceCC :: StaticForceCC Int),
 -- >    declare (staticForceCC :: forall a . StaticForceCC (Closure a))]
---
---
--- [Registering @'Static'@ dictionaries]
---
--- All @'Static'@ dictionaries need to be declared, as shown above.
--- By convention, each module must concatenate all such @'Static'@ declarations
--- (including declarations in imported modules) into a single @'Static'@
--- declaration. The @Main@ module, finally, must /register/ its @'Static'@
--- declaration (which by convention includes all declarations in imported
--- modules) at the beginning of the @main@ function, to create the @'Static'@
--- table. This section shows how to concatenate and register @'Static'@
--- declarations.
---
--- First, concatenating @'Static'@ declarations. As shown above, a @'Static'@
--- dictionary can be turned into a @'Static'@ declaration (of type
--- @'StaticDecl'@) by applying @'declare'@. The type @'StaticDecl'@ is an
--- instance of class @'Data.Monoid.Monoid'@, so @'Static'@ declarations can be
--- concatenated via the @'mconcat'@ operation. In fact, @'StaticDecl'@ is not
--- just a monoid but a commutative and idempotent monoid, thanks to the
--- way @'Static'@ dictionaries are constructed. That means that @'Static'@
--- declarations can be concatenated repeatedly and in any order without
--- changing the result.
---
--- As a matter of convention, every module which constructs explicit Closures
--- must export a term @declareStatic :: StaticDecl@, a comprehensive declaration
--- of all the module's @'Static'@ dictionaries, including all @'Static'@
--- dictionaries of imported modules. The latter is required because the module
--- may call imported functions which in turn depend on their modules'
--- @'Static'@ dictionaries.
---
--- > declareStatic :: StaticDecl
--- > declareStatic = Data.Monoid.mconcat
--- >   [declare $(static 'id),
--- >    declare $(static 'constUnit),
--- >    declare $(static 'compC_abs),
--- >    declare $(static 'apC_abs),
--- >    declare (staticToClosure :: forall a . StaticToClosure (Closure a)),
--- >    declare (staticToClosure :: forall a . StaticToClosure [Closure a]),
--- >    declare (staticToClosure :: forall a . StaticToClosure (Maybe (Closure a)))]
---
--- Above is a simple example of such a comprehensive Static declaration,
--- the declaration of this module. Note that the order of the list argument
--- to @'mconcat'@ does not matter because because @'StaticDecl'@ is a
--- commutative monoid. Also note that the 'static' splices used above rely
--- on reification for inspecting names. This is unproblematic for imported
--- names (like 'id') but names defined in the current module (like 'constUnit',
--- 'compC_abs', 'apC_abs') need to be defined textually before their 'static'
--- splice, and the splice needs to be separated from the definition by a
--- toplevel Template Haskell splice. The former requirement pushes
--- Static declarations towards the end of a module, or just before 'main'
--- in the 'Main' module; the latter requirement typically is achieved by
--- preceding the definition of 'declareStatic' with an empty toplevel splice:
---
--- > $(return [])
---
--- Below is a second, more complex example of a Static declaration, taken
--- from an HdpH application.
---
--- > declareStatic :: StaticDecl
--- > declareStatic = Data.Monoid.mconcat
--- >   [Control.Parallel.HdpH.declareStatic,
--- >    Control.Parallel.HdpH.Strategies.declareStatic,
--- >    declare (staticToClosure :: StaticToClosure Int),
--- >    declare (staticToClosure :: StaticToClosure [Int]),
--- >    declare (staticToClosure :: StaticToClosure Integer),
--- >    declare (staticForceCC :: StaticForceCC Integer),
--- >    declare $(static 'spark_sum_euler_abs),
--- >    declare $(static 'sum_totient),
--- >    declare $(static 'totient)]
---
--- This declaration does concatenate the Static declarations of two imported
--- modules, @Control.Parllel.HdpH@ and @Control.Parallel.HdpH.Strategies@.
--- Actually, the latter also imports the former, so
--- @Control.Parallel.HdpH.Strategies.declareStatic@ already concatenates
--- @Control.Parallel.HdpH.declareStatic@, and so the above call to
--- @Control.Parallel.HdpH.declareStatic@ could be omitted. However, that
--- omission is only justified in the knowledge of implementation details of
--- @Control.Parallel.HdpH.Strategies@ (namely its import graph). The convention
--- that @'Static'@ declarations of /all/ imported modules must be concatenated,
--- regardless of whether they are transitively concatenated by other imported
--- modules, is more robust; the resulting @'Static'@ declaration is the same
--- anyway, thanks to @'StaticDecl'@ being an idempotent monoid.
---
--- A general rule how to deal with imports and @'Static'@ declarations:
--- If module @M1@ imports another module @M2@, and
--- if @M2@ exports a variable @declareStatic :: StaticDecl@
--- then @M1@ must export its own @declareStatic :: StaticDecl@,
--- which needs to concatenate @M2.declareStatic@ (amongst other declarations).
--- Note that the rule applies even if @M1@ ostensibly imports "nothing"
--- from @M2@, eg. @M1@ imports @M2@ with the clause @import M2 ()@. For
--- this clause may still import instance declarations from @M2@, and those
--- instances may depend on M2's @'Static'@ dictionaries.
---
---
--- Finally, registering a @'Static'@ declaration. This must be done exactly once
--- in the @Main@ module, right at the start of @main@, by calling the function
--- @'register'@ on the @Main@ module's comprehensive @'Static'@ declaration.
--- This is shown in sample code below, taken from a HdpH program.
--- Note that any actions executed prior to @'register'@ (ie. the @hSetBuffering@
--- calls) must not involve explicit Closures.
---
--- > main :: IO ()
--- > main = do
--- >   hSetBuffering stdout LineBuffering
--- >   hSetBuffering stderr LineBuffering
--- >   register declareStatic
--- >   ...
-
-
------------------------------------------------------------------------------
--- Value Closure construction
-
--- | @toClosure x@ constructs a value Closure wrapping @x@, provided the
--- type of @x@ is an instance of class @'ToClosure'@.
--- Note that the serialised representation of the resulting Closure stores a
--- serialised representation (as per class @'Data.Serialize.Serialize'@) of
--- @x@, so serialising the resulting Closure will force @x@ (hence could be
--- costly). However, Closure construction itself is cheap.
-toClosure :: (ToClosure a) => a -> Closure a
-toClosure val = $(mkClosureLoc [| toClosure_abs val |]) locToClosure
-
-{-# INLINE toClosure_abs #-}
-toClosure_abs :: a -> Thunk a
-toClosure_abs val = Thunk val
-
-
--- | Indexing class, recording types which support the @'toClosure'@ operation;
--- see the tutorial below for a more thorough explanation.
--- Note that @ToClosure@ is a subclass of @'Data.Serialize.Serialize'@
--- and @'Control.DeepSeq.NFData'@.
-class (NFData a, Serialize a) => ToClosure a where
-  -- | Only method of class @ToClosure@, recording the source location
-  -- where an instance of @ToClosure@ is declared.
-  locToClosure :: LocT a
-
--- | Type synonym for declaring the @'Static'@ dictionary required by
--- @'ToClosure'@ instances; see the tutorial below for a more thorough 
--- explanation.
-type StaticToClosure a = Static (CDict a a)
-
--- Empty splice; TH hack s.t. 'staticToClosure' below can see 'toClosure_abs'.
-$(return [])
-
--- | @'Static'@ dictionary required by a @'ToClosure'@ instance;
--- see the tutorial below for a more thorough explanation.
-staticToClosure :: (ToClosure a) => StaticToClosure a
-staticToClosure = $(staticLoc 'toClosure_abs) locToClosure
 
 
 -----------------------------------------------------------------------------
@@ -593,15 +265,33 @@ staticToClosure = $(staticLoc 'toClosure_abs) locToClosure
 -- @'Control.DeepSeq.force' clo@ (because @forceClosure@ updates the closure
 -- representation).
 -- However, @forceClosure clo@ is essentially the same as
--- @ @'Control.DeepSeq.force' $ toClosure $ unClosure clo@.
+-- @'Control.DeepSeq.force' $ pure $ unClosure clo@.
 --
-forceClosure :: (NFData a, ToClosure a) => Closure a -> Closure a
-forceClosure clo = x `deepseq` toClosure x where x = unClosure clo
+forceClosure :: ToClosure a -> Closure a -> Closure a
+forceClosure tc clo = force $ toClosure tc $ unClosure clo
+
 
 -- Note that it does not make sense to construct a variant of @forceClosure@
 -- that would evaluate the thunk inside a Closure head-strict only. The reason 
 -- is that serialising such a Closure would turn it into a fully forced one.
 
+
+{-
+-- NOTE: This should work!
+type Strategy a = a -> IO a
+
+forceC :: ToClosure a -> Strategy (Closure a)
+forceC sp clo = return $! forceClosure sp clo
+
+forceCC :: ToClosure a -> Closure (Strategy (Closure a))
+forceCC tc = $(mkClosure [|forceCC_abs tc|])
+
+forceCC_abs tc = Thunk $ forceC tc
+
+tcInt = mkToClosure :: ToClosure Int
+tcClosureIntList = mkToClosure :: ToClosure (Closure [Int])
+tcStaticInt = mkToClosure :: ToClosure (Static Int)
+-}
 
 ------------------------------------------------------------------------------
 -- Categorical operations on function Closures
@@ -639,27 +329,50 @@ apC_abs :: (Closure (a -> b), Closure a) -> Thunk b
 apC_abs (clo_f, clo_x) = Thunk (unClosure clo_f $ unClosure clo_x)
 
 
+-------------
+
+-- TODO: 'toClosureCD :: Closure (Dict (...)) -> a -> Closure a' as a generic
+-- variant of 'toClosure' that stores a Closure with a Dict (uses more space).
+
+cdInt = $(mkClosure [| dInt |])
+dInt = Dict :: Dict (NFData Int, Binary Int, Serialize Int)
+
+cdClosureInt = $(mkClosure [| dClosureInt |])
+dClosureInt = Dict :: Dict (NFData (Closure Int), Binary (Closure Int), Serialize (Closure Int))
+
+toClosureCD :: Closure (Dict (NFData a, Binary a, Serialize a)) -> a -> Closure a
+toClosureCD cd x = undefined
+
+-- NOTE: This cannot work because it would require that normalisation
+--       and serialisation change their behaviour dependent on part
+--       of the environment, ie. in a sense we'd need some kind of
+--       dependent pair type for the env, instead of just a pair.
+--
+--       The old style CDict type would have allowed this, though.
+--
+--       We can still use the Dict trick to cope with overloading,
+--       and then use `apC` to compose (provided both args are Closures).
+--       We just can't use the closured Dict to change the 
+--       behaviour of Closures themselves.
+--
+--       Making Dict Static will often be sufficient.
+
+
 -----------------------------------------------------------------------------
 -- Static declaration (must be at end of module)
 
 -- Empty splice; TH hack to make all environment abstractions visible.
 $(return [])
 
--- 'ToClosure' instance for Closures, lists of Closures and option Closures;
--- these instances only record the indexing location; not that all instances
--- of 'ToClosure' look like this.
-instance ToClosure (Closure a) where locToClosure = $(here)
-instance ToClosure [Closure a] where locToClosure = $(here)
-instance ToClosure (Maybe (Closure a)) where locToClosure = $(here)
-
 declareStatic :: StaticDecl
 declareStatic = mconcat
   [declare $(static 'id),
    declare $(static 'constUnit),
    declare $(static 'compC_abs),
-   declare $(static 'apC_abs),
-   declare (staticToClosure :: forall a . StaticToClosure (Closure a)),
-   declare (staticToClosure :: forall a . StaticToClosure [Closure a]),
-   declare (staticToClosure :: forall a . StaticToClosure (Maybe (Closure a)))]
-     -- Declaration of indexed Static dictionaries for 'toClosure';
-     -- note that all declarations of 'staticToClosure' look like this.
+--   declare $(static 'dInt),
+--   declare $(static 'dClosureInt),
+--   declare $(static 'forceCC_abs),
+--   declare tcInt,
+--   declare tcClosureIntList,
+--   declare tcStaticInt,
+   declare $(static 'apC_abs)]

@@ -20,7 +20,7 @@
 
 module Control.Parallel.HdpH.Closure.Static
   ( -- * 'Static' type constructor
-    Static,      -- instances: Eq, Ord, Show, NFData, Serialize
+    Static,      -- instances: Eq, Ord, Show, NFData, Binary, Serialize, Typeable
 
     -- * introducing 'Static'
     staticAs,    -- :: a -> String -> Static a
@@ -44,6 +44,8 @@ import Control.DeepSeq (NFData(rnf))
 import Control.Exception (evaluate)
 import Control.Monad (unless)
 import Data.Array (listArray, (!), bounds, elems)
+import Data.Binary (Binary)
+import qualified Data.Binary (put, get)
 import Data.Bits (shiftL, xor)
 import Data.Functor ((<$>))
 import Data.IORef (readIORef, atomicModifyIORef)
@@ -237,7 +239,11 @@ instance NFData (Static a) where
 
 
 -----------------------------------------------------------------------------
--- Serialize instance for 'Static'
+-- Binary/Serialize instances for 'Static'
+
+instance Binary (Static a) where
+  put = Data.Binary.put . index
+  get = resolve <$> Data.Binary.get
 
 instance Serialize (Static a) where
   put = Data.Serialize.put . index

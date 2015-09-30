@@ -1,5 +1,5 @@
 name:          hdph-closure
-version:       0.2.2
+version:       0.3.0
 synopsis:      Explicit closures in Haskell distributed parallel Haskell
 description:   Explicit closures are serialisable representations of thunks.
                This package exports the fully polymorphic explicit closures
@@ -35,6 +35,8 @@ Library
   build-depends:   template-haskell,
                    array >= 0.1 && < 0.6,
                    base >= 4 && < 5,
+                   constraints == 0.4.*,
+                   binary == 0.7.*,
                    cereal == 0.4.*,
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
@@ -48,6 +50,8 @@ Executable overhead
     build-depends: template-haskell,
                    array >= 0.1 && < 0.6,
                    base >= 4 && < 5,
+                   constraints == 0.4.*,
+                   binary == 0.7.*,
                    cereal == 0.4.*,
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
@@ -64,6 +68,8 @@ Executable nested
     build-depends: template-haskell,
                    array >= 0.1 && < 0.6,
                    base >= 4 && < 5,
+                   constraints == 0.4.*,
+                   binary == 0.7.*,
                    cereal == 0.4.*,
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
@@ -80,6 +86,8 @@ Executable toClosure
     build-depends: template-haskell,
                    array >= 0.1 && < 0.6,
                    base >= 4 && < 5,
+                   constraints == 0.4.*,
+                   binary == 0.7.*,
                    cereal == 0.4.*,
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,
@@ -96,6 +104,8 @@ Executable toClosureBench
     build-depends: template-haskell,
                    array >= 0.1 && < 0.6,
                    base >= 4 && < 5,
+                   constraints == 0.4.*,
+                   binary == 0.7.*,
                    cereal == 0.4.*,
                    bytestring == 0.10.*,
                    containers >= 0.1 && < 0.6,

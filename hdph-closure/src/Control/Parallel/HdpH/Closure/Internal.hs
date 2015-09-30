@@ -19,37 +19,41 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 
 module Control.Parallel.HdpH.Closure.Internal
-  ( -- source locations with phantom type attached
-    LocT,             -- instances: Eq, Ord, Show
-    here,             -- :: ExpQ
-
-    -- Closure type constructor
-    Closure,          -- instances: Show, NFData, Serialize
-    
-    -- Closure dictionary type constructor
-    CDict,            -- no instances
+  ( -- Closure type constructor
+    Closure,          -- instances: Show, NFData, Binary, Serialize, Typeable
 
     -- Type/data constructor marking return type of environment abstractions
-    Thunk(Thunk),     -- no instances
+    Thunk(Thunk),     -- no instances (except Typeable)
 
     -- eliminating Closures
     unClosure,        -- :: Closure a -> a
 
+    -- value Closure construction
+    ToClosure,        -- synonym (to Static of some internal type)
+    mkToClosure,      -- :: (NFData a, Binary a, Serialize a, Typeable a)
+                      -- => ToClosure a
+    toClosure,        -- :: ToClosure a -> a -> Closure a
+
     -- safe Closure construction
     mkClosure,        -- :: ExpQ -> ExpQ
-    mkClosureLoc,     -- :: ExpQ -> ExpQ
 
-    -- static Closure dictionaries
-    static,           -- :: Name -> ExpQ
-    staticLoc         -- :: Name -> ExpQ
+    -- static Closure environment construction
+    static            -- :: Name -> ExpQ
   ) where
 
-import Prelude hiding (exp)
+import Prelude hiding (exp, abs)
 import Control.DeepSeq (NFData(rnf))
 import Control.Monad (unless)
-import Data.Serialize (Serialize(put, get), Get, Put)
+import Data.Binary (Binary)
+import qualified Data.Binary (put, get)
+import Data.Constraint (Dict(Dict))
+import Data.Serialize (Serialize)
+import qualified Data.Serialize (put, get)
+import Data.Typeable (Typeable, typeRep, Proxy(Proxy))
 import Language.Haskell.TH
        (Q, Exp(AppE, VarE, LitE, TupE, ConE), ExpQ,
         Type(AppT, ArrowT, ConT, ForallT),
@@ -63,151 +67,130 @@ import Control.Parallel.HdpH.Closure.Static (Static, unstatic, staticAs)
 
 
 -----------------------------------------------------------------------------
--- source locations with phantom type attached
-
--- | A value of type @'LocT a'@ is a representation of a Haskell source location
--- (or more precisely, the location of a Template Haskell splice, as produced by
--- @'here'@). Additionally, this location is annotated with a phantom type 'a',
--- which is used for mapping location indexing to type indexing.
-newtype LocT a = LocT { unLocT :: String } deriving (Eq, Ord)
-
-instance Show (LocT a) where
-  show = unLocT
-
--- | Template Haskell construct returning its own location when spliced.
-here :: ExpQ
-here = do
-  loc <- TH.location
-  let loc_strQ = return $ LitE $ stringL $ showLoc loc
-  [| LocT $loc_strQ |]
-
-
------------------------------------------------------------------------------
 -- 'Closure' type constructor
 
 -- | Newtype wrapper marking return type of environment abstractions.
-newtype Thunk a = Thunk a
+newtype Thunk a = Thunk a deriving (Typeable)
 
 
--- | Abstract closure dictionary.
-data CDict env a =
-       CDict { putEnv :: env -> Put,       -- environment serialiser
-               getEnv :: Get env,          -- environment deserialiser
-               rnfEnv :: env -> (),        -- environment normaliser
-               absEnv :: env -> Thunk a }  -- environment abstraction
-
--- | Construct a closure dictionary from a given environment abstraction.
-mkCDict :: (NFData env, Serialize env) => (env -> Thunk a) -> CDict env a
-mkCDict env_abs =
-  CDict { putEnv = put, getEnv = get, rnfEnv = rnf, absEnv = env_abs }
+-- | Internal pair type.
+data Pair a b = Pair a b deriving (Typeable)
 
 
--- | Abstract type of explicit closures.
--- Explicit closures consist of an existentially quantified environment
--- and a static dictionary of functions to serialize, deserialize, normalize
--- and evaluate that environment.
--- Explicit closures are hyperstrict in the static dictionary but not in the 
--- environment. An explicit closure is in NF iff its environment is in NF,
--- including any explicit closures contained in the environment.
+-- | Static closure environment, parametrized by dynamic environment 'd' and
+-- closure result type 'a'.
+--
+-- A static closure environment consists of an explicit dictionary for a
+-- number of type classes (to normalize and serialize the dynamic environment)
+-- and a function to evaluate the dynamic environment.
+type StaticEnv d a =
+  Static (Pair (Dict (NFData d, Binary d, Serialize d)) (d -> Thunk a))
+
+
+-- | Explicit closure (abstract type).
+-- Explicit closures consist of an existentially quantified dynamic environment
+-- and a hyperstrict static closure environment. An explicit closure is in NF
+-- iff its dynamic environment is in NF, including any explicit closures
+-- contained in the environment.
 data Closure a where
-  Closure :: !(Static (CDict env a)) -> env -> Closure a
+  Closure :: !(StaticEnv d a) -> d -> Closure a
+  deriving (Typeable)
 
 instance NFData (Closure a) where
-  -- force env but not static dict (because that's already in NF)
-  rnf (Closure st_dict env) = rnfEnv (unstatic st_dict) env
+  -- force dyn env but not stat env (because that's already in NF)
+  rnf (Closure s d) = case unstatic s of
+                        Pair Dict _ -> rnf d
 
 -- Explicit closures are serialisable (using the static dictionary).
-instance Serialize (Closure a) where
-  put (Closure st_dict env) = do put st_dict 
-                                 putEnv (unstatic st_dict) env
-  get = do st_dict <- get
-           env <- getEnv (unstatic st_dict)
-           return (Closure st_dict env)
+instance Binary (Closure a) where
+  put (Closure s d) = do Data.Binary.put s
+                         case unstatic s of
+                           Pair Dict _ -> Data.Binary.put d
+  get = do s <- Data.Binary.get
+           d <- case unstatic s of
+                  Pair Dict _ -> Data.Binary.get
+           return (Closure s d)
 
-instance Show (Closure a) where  -- for debugging only; show static dict only
-  showsPrec _ (Closure st_dict _env) =
-    showString "Closure(" . shows st_dict . showString ")"
+instance Serialize (Closure a) where
+  put (Closure s d) = do Data.Serialize.put s
+                         case unstatic s of
+                           Pair Dict _ -> Data.Serialize.put d
+  get = do s <- Data.Serialize.get
+           d <- case unstatic s of
+                  Pair Dict _ -> Data.Serialize.get
+           return (Closure s d)
+
+instance Show (Closure a) where  -- for debugging only; show static env only
+  showsPrec _ (Closure s _d) =
+    showString "Closure(" . shows s . showString ")"
 
 
 -----------------------------------------------------------------------------
 -- eliminating Closures
 
 -- | Closure elimination.
--- Unwraps, ie. forces, an explicit closure (by applying 'absEnv').
+-- Unwraps, ie. forces, an explicit closure (by applying static fun eval).
 {-# INLINE unClosure #-}
 unClosure :: Closure a -> a
-unClosure (Closure st_dict env) =
-  case absEnv (unstatic st_dict) env of { Thunk x -> x }
+unClosure (Closure s d) =
+  case unstatic s of
+    Pair _ eval -> case eval d of
+                     Thunk x -> x
 
 
 -----------------------------------------------------------------------------
--- safely constructing Closures from environment abstractions
+-- introducing value Closures
+
+type ToClosure a = StaticEnv a a
+
+toClosure :: ToClosure a -> a -> Closure a
+toClosure = Closure
+
+mkToClosure :: forall a . (NFData a, Binary a, Serialize a, Typeable a)
+            => ToClosure a
+mkToClosure =
+  mkStatic Thunk label
+    where
+      label = "ToClosure<<" ++ show (typeRep (Proxy :: Proxy a)) ++ ">>"
+
+
+-----------------------------------------------------------------------------
+-- safely constructing Closures from eval abstractions
 
 -- | Template Haskell transformation constructing a Closure from an expression.
 -- The expression must either be a single static closure (in which case the
--- result is a /static/ Closure), or an application of an environment
+-- result is a /static/ Closure), or an application of an eval
 -- abstraction to a tuple of variables.
 -- See the tutorial below for how to use @mkClosure@.
 mkClosure :: ExpQ -> ExpQ
 mkClosure expQ = do
   let prf = "Control.Parallel.HdpH.Closure.mkClosure: "
   let err_msg = prf ++ "argument not of the form " ++
-                "'static_closure' or 'environment_abstraction (var,...,var)'"
+                "'static_closure' or 'eval_abstraction (var,...,var)'"
   exp <- expQ
-  (name, env, is_abs) <- case exp of
+  (name, d, is_abs) <- case exp of
     AppE (VarE clo_abs_name) vars -> return (clo_abs_name,  vars, True)
     AppE (ConE clo_abs_name) vars -> return (clo_abs_name,  vars, True)
     VarE stat_clo_name            -> return (stat_clo_name, unit, False)
     ConE stat_clo_name            -> return (stat_clo_name, unit, False)
     _                             -> fail err_msg
   unless (isGlobalName name) $ fail err_msg
-  unless (isVarTuple env) $ fail err_msg
+  unless (isVarTuple d) $ fail err_msg
 -- Note: 'typeClosureAbs' commented to avoid calling 'reify' in 'mkClosure';
 --       this may lead to less comprehensible error messages but should
 --       have no consequences otherwise.
 --  ty <- typeClosureAbs (const $ prf ++ "impossible case") name
 --  unless (isClosureAbsType ty == is_abs) $ fail err_msg
-  let st_dictQ = staticInternal prf is_abs name
-  let envQ = return env
-  [| Closure $st_dictQ $envQ |]
-
-
--- | Template Haskell transformation constructing a family of Closures from an
--- expression. The family is indexed by location (that's what the suffix @Loc@
--- stands for).
--- The expression must either be a single static closure (in which case the
--- result is a family of /static/ Closures), or an application of an environment
--- abstraction to a tuple of variables.
--- See the tutorial below for how to use @mkClosureLoc@.
-mkClosureLoc :: ExpQ -> ExpQ
-mkClosureLoc expQ = do
-  let prf = "Control.Parallel.HdpH.Closure.mkClosureLoc: "
-  let err_msg = prf ++ "argument not of the form " ++
-                "'static_closure' or 'environment_abstraction (var,...,var)'"
-  exp <- expQ
-  (name, env, is_abs) <- case exp of
-    AppE (VarE clo_abs_name) vars -> return (clo_abs_name,  vars, True)
-    AppE (ConE clo_abs_name) vars -> return (clo_abs_name,  vars, True)
-    VarE stat_clo_name            -> return (stat_clo_name, unit, False)
-    ConE stat_clo_name            -> return (stat_clo_name, unit, False)
-    _                             -> fail err_msg
-  unless (isGlobalName name) $ fail err_msg
-  unless (isVarTuple env) $ fail err_msg
--- Note: 'typeClosureAbs' commented to avoid calling 'reify' in 'mkClosureLoc';
---       this may lead to less comprehensible error messages but should
---       have no consequences otherwise.
---  ty <- typeClosureAbs (const $ prf ++ "impossible case") name
---  unless (isClosureAbsType ty == is_abs) $ fail err_msg
-  let st_dict_LocQ = staticLocInternal prf is_abs name
-  let envQ = return env
-  [| \ loc -> Closure ($st_dict_LocQ loc) $envQ |]
+  let sQ = staticInternal prf is_abs name
+  let dQ = return d
+  [| Closure $sQ $dQ |]
 
 
 -----------------------------------------------------------------------------
--- Static closure dictionaries
+-- Static closure environment
 
--- | Template Haskell transformation converting a static closure or environment
--- abstraction (given by its name) into a @'Static'@ closure dictionary.
+-- | Template Haskell transformation converting a static closure or eval
+-- abstraction (given by its name) into a static closure environment.
 -- See the tutorial below for how to use @static@.
 static :: Name -> ExpQ
 static name = do
@@ -222,57 +205,23 @@ staticInternal prf is_abs name = do
   let mkErrMsg nm = prf ++ nm ++ " not a global variable or data constructor"
   (expQ, labelQ) <- labelClosureAbs mkErrMsg name
   if is_abs
-    then [| mkStatic  $expQ $labelQ |]  -- name is env abs
+    then [| mkStatic  $expQ $labelQ |]  -- name is eval abstraction
     else [| mkStatic_ $expQ $labelQ |]  -- name is static closure
 
--- Called by 'staticInternal' if argument names an environment abstraction.
+-- Called by 'staticInternal' if argument names an eval abstraction.
 {-# INLINE mkStatic #-}
-mkStatic :: (NFData env, Serialize env)
-         => (env -> Thunk a) -> String -> Static (CDict env a)
-mkStatic env_abs label =
-  staticAs (mkCDict env_abs) label
+mkStatic :: (NFData d, Binary d, Serialize d)
+         => (d -> Thunk a) -> String -> StaticEnv d a
+mkStatic eval label =
+  staticAs (Pair Dict eval) label
 
 -- Called by 'staticInternal' if argument names a static closure.
 {-# INLINE mkStatic_ #-}
-mkStatic_ :: a -> String -> Static (CDict () a)
+mkStatic_ :: a -> String -> StaticEnv () a
 mkStatic_ stat_clo label =
-  staticAs (mkCDict $ const $ Thunk stat_clo) label   -- inject 'Thunk'
-
-
--- | Template Haskell transformation converting a static closure or environment
--- abstraction (given by its name) into a family of @'Static'@ closure
--- dictionaries indexed by location (that's what the suffix @Loc@ stands for).
--- See the tutorial below for how to use @staticLoc@.
-staticLoc :: Name -> ExpQ
-staticLoc name = do
-  let prf = "Control.Parallel.HdpH.Closure.staticLoc: "
-  let mkErrMsg nm = prf ++ nm ++ " not a variable or data constructor"
-  ty <- typeClosureAbs mkErrMsg name
-  staticLocInternal prf (isClosureAbsType ty) name
-
--- Called by 'staticLoc' and 'mkClosureLoc'.
-staticLocInternal :: String -> Bool -> Name -> ExpQ
-staticLocInternal prf is_abs name = do
-  let mkErrMsg nm = prf ++ nm ++ " not a global variable or data constructor"
-  (expQ, labelQ) <- labelClosureAbs mkErrMsg name
-  if is_abs
-    then [| mkStaticLoc  $expQ $labelQ |]  -- name is env abs
-    else [| mkStaticLoc_ $expQ $labelQ |]  -- name is static closure
-
--- Called by 'staticLoc' if argument names an environment abstraction.
-{-# INLINE mkStaticLoc #-}
-mkStaticLoc :: (NFData env, Serialize env)
-            => (env -> Thunk a) -> String -> (LocT a -> Static (CDict env a))
-mkStaticLoc env_abs label =
-  \ loc -> staticAs (mkCDict env_abs) $
-             label ++ "{loc=" ++ show loc ++ "}"
-
--- Called by 'staticLoc' if argument names a static closure.
-{-# INLINE mkStaticLoc_ #-}
-mkStaticLoc_ :: a -> String -> (LocT a -> Static (CDict () a))
-mkStaticLoc_ stat_clo label =
-  \ loc -> staticAs (mkCDict $ const $ Thunk stat_clo) $   -- inject 'Thunk'
-             label ++ "{loc=" ++ show loc ++ "}"
+  staticAs (Pair Dict eval) label
+    where
+      eval () = Thunk stat_clo   -- inject 'Thunk'
 
 
 -----------------------------------------------------------------------------
@@ -350,19 +299,3 @@ isVarTuple exp = case exp of
 -- Template Haskell expression for empty tuple.
 unit :: Exp
 unit = ConE $ tupleDataName 0
-
-
------------------------------------------------------------------------------
--- auxiliary stuff: various show operations
-
--- Show Template Haskell location.
--- Should be defined in module Language.Haskell.TH.
-{-# INLINE showLoc #-}
-showLoc :: TH.Loc -> String
-showLoc loc = showsLoc loc ""
-  where
-    showsLoc loc' = showString (TH.loc_package loc')  . showString "/" .
-                    showString (TH.loc_module loc')   . showString ":" .
-                    showString (TH.loc_filename loc') . showString "@" .
-                    shows (TH.loc_start loc')         . showString "-" .
-                    shows (TH.loc_end loc')

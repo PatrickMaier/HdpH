@@ -16,59 +16,57 @@ import Data.Monoid (mconcat)
 
 import Control.Parallel.HdpH.Closure
        (Closure, Thunk(Thunk), mkClosure, unClosure,
-        toClosure, ToClosure(locToClosure),
-        static, StaticToClosure, staticToClosure,
-        StaticDecl, declare, register, here)
+        toClosure, ToClosure, mkToClosure,
+        static, StaticDecl, declare, register)
 import qualified Control.Parallel.HdpH.Closure (declareStatic)
 
 
-toClosureIntList :: [Int] -> Closure [Int]
-toClosureIntList xs = $(mkClosure [| toClosureIntList_abs xs |])
+toClosureListInt :: [Int] -> Closure [Int]
+toClosureListInt xs = $(mkClosure [| toClosureListInt_abs xs |])
 
-toClosureIntList_abs :: [Int] -> Thunk [Int]
-toClosureIntList_abs xs = Thunk xs
+toClosureListInt_abs :: [Int] -> Thunk [Int]
+toClosureListInt_abs xs = Thunk xs
 
 
 -----------------------------------------------------------------------------
 -- Static declaration (just before 'main')
 
+tcListInt = mkToClosure :: ToClosure [Int]
+
 -- Empty splice; TH hack to make all environment abstractions visible.
 $(return [])
-
--- orphan ToClosure instances (unavoidably so)
-instance ToClosure [Int] where locToClosure = $(here)
 
 declareStatic :: StaticDecl
 declareStatic =
   mconcat
     [Control.Parallel.HdpH.Closure.declareStatic,
-     declare $(static 'toClosureIntList_abs),
-     declare (staticToClosure :: StaticToClosure [Int])]
+     declare $(static 'toClosureListInt_abs),
+     declare tcListInt]
 
 
 -----------------------------------------------------------------------------
 -- main
 
-mkIntList :: Int -> [Int]
-mkIntList n = [1 .. n]
+mkListInt :: Int -> [Int]
+mkListInt n = [1 .. n]
 
 main = defaultMain $
-  [let xs = mkIntList n in
+  [let xs = mkListInt n in
      bgroup ("whnf [1.." ++ show n ++ "]") [
        bench "id" $ whnf id xs,
-       bench "toClosureIntList" $ whnf toClosureIntList xs,
-       bench "toClosure" $ whnf toClosure xs,
-       bench "unClosure" $ whnf unClosure (toClosure xs),
-       bench "unClosure.toClosure" $ whnf (unClosure . toClosure) xs,
-       bench "unClosure.toClosureIntList" $ whnf (unClosure . toClosureIntList) xs]
+       bench "toClosureListInt" $ whnf toClosureListInt xs,
+       bench "toClosure" $ whnf (toClosure tcListInt) xs,
+       bench "unClosure" $ whnf unClosure (toClosure tcListInt xs),
+       bench "unClosure.toClosure" $ whnf (unClosure . toClosure tcListInt) xs,
+       bench "unClosure.toClosureListInt" $ whnf (unClosure . toClosureListInt) xs]
   | n <- [0, 1, 300]]
   ++
-  [let xs = mkIntList n in
+  [let xs = mkListInt n in
      bgroup ("nf [1.." ++ show n ++ "]") [
        bench "id" $ nf id xs,
-       bench "toClosureIntList" $ nf toClosureIntList xs,
-       bench "toClosure" $ nf toClosure xs,
-       bench "unClosure" $ nf unClosure (toClosure xs),
-       bench "unClosure.toClosure" $ nf (unClosure . toClosure) xs,
-       bench "unClosure.toClosureIntList" $ nf (unClosure . toClosureIntList) xs]
+       bench "toClosureListInt" $ nf toClosureListInt xs,
+       bench "toClosure" $ nf (toClosure tcListInt) xs,
+       bench "unClosure" $ nf unClosure (toClosure tcListInt xs),
+       bench "unClosure.toClosure" $ nf (unClosure . toClosure tcListInt) xs,
+       bench "unClosure.toClosureListInt" $ nf (unClosure . toClosureListInt) xs]
   | n <- [0, 1, 300]]

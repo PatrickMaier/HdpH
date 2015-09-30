@@ -4,6 +4,7 @@
 -----------------------------------------------------------------------------
 
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 
 module Control.Parallel.HdpH.Closure.Static.Type
   ( -- * 'Static' things (and constituent parts)
@@ -21,6 +22,7 @@ import Prelude
 import Data.Array (Array)
 import Data.Int (Int32)
 import Data.Map (Map)
+import Data.Typeable (Typeable)
 import Data.Word (Word32)
 
 
@@ -31,6 +33,7 @@ import Data.Word (Word32)
 -- value (for faster comparisons). Note that all fields are strict.
 data StaticLabel = StaticLabel { hash :: !Int32,
                                  name :: !String }
+                   deriving (Typeable)
 
 
 -- A Static index, that is an index into the global Static table.
@@ -47,6 +50,7 @@ type StaticIndex = Word32
 data Static a = Static { label    :: !StaticLabel,
                          index    :: StaticIndex,
                          unstatic :: a }
+                deriving (Typeable)
 -- ^ A term of type @Static a@ is a serialisable reference to a /static/ term
 -- of type @a@.
 
@@ -64,6 +68,7 @@ data AnyStatic where
 --       for some 'a'. However, to fit into the map, we wrap all these types
 --       into the existential 'AnyStatic'.
 newtype StaticDecl = StaticDecl { unStaticDecl :: Map StaticLabel AnyStatic }
+                     deriving (Typeable)
 -- ^ A @'Static'@ declaration is a collection of static terms together with
 -- their serialisable @'Static'@ references.
 -- @'Static'@ declarations form a monoid, and can be combined by methods of

@@ -25,9 +25,8 @@ import System.Environment (getArgs)
 
 import Control.Parallel.HdpH.Closure
        (Closure, unClosure,
-        toClosure, ToClosure(locToClosure),
-        StaticToClosure, staticToClosure,
-        StaticDecl, declare, register, here)
+        toClosure, ToClosure, mkToClosure,
+        StaticDecl, declare, register, showStaticTable)
 import qualified Control.Parallel.HdpH.Closure (declareStatic)
 
 -----------------------------------------------------------------------------
@@ -69,7 +68,7 @@ measureListListInt xss =
 measureCloListListInt :: [[Int]] -> IO ((Int, Int), NominalDiffTime)
 measureCloListListInt xss =
   timeIO $ do
-    let clo = toClosure xss :: Closure [[Int]]
+    let clo = toClosure tcListListInt xss
     let bs = encode clo
     evaluate (bs `deepseq` ())
     let !sz = BS.length bs
@@ -83,7 +82,7 @@ measureCloListListInt xss =
 measureListCloListInt :: [[Int]] -> IO ((Int, Int), NominalDiffTime)
 measureListCloListInt xss =
   timeIO $ do
-    let clos = map toClosure xss :: [Closure [Int]]
+    let clos = map (toClosure tcListInt) xss
     let bs = encode clos
     evaluate (bs `deepseq` ())
     let !sz = BS.length bs
@@ -98,8 +97,8 @@ measureListCloListInt xss =
 measureCloListCloListInt :: [[Int]] -> IO ((Int, Int), NominalDiffTime)
 measureCloListCloListInt xss =
   timeIO $ do
-    let clos = map toClosure xss :: [Closure [Int]]
-    let clo = toClosure clos :: Closure [Closure [Int]]
+    let clos = map (toClosure tcListInt) xss
+    let clo = toClosure tcListCloListInt clos
     let bs = encode clo
     evaluate (bs `deepseq` ())
     let !sz = BS.length bs
@@ -111,19 +110,20 @@ measureCloListCloListInt xss =
 -----------------------------------------------------------------------------
 -- Static declaration (just before 'main')
 
+tcListInt        = mkToClosure :: ToClosure [Int]
+tcListListInt    = mkToClosure :: ToClosure [[Int]]
+tcListCloListInt = mkToClosure :: ToClosure [Closure [Int]]
+
 -- Empty splice; TH hack to make all environment abstractions visible.
 $(return [])
-
--- orphan ToClosure instances (unavoidably so)
-instance ToClosure [Int] where locToClosure = $(here)
-instance ToClosure [[Int]] where locToClosure = $(here)
 
 declareStatic :: StaticDecl
 declareStatic =
   mconcat
     [Control.Parallel.HdpH.Closure.declareStatic,
-     declare (staticToClosure :: StaticToClosure [Int]),
-     declare (staticToClosure :: StaticToClosure [[Int]])]
+     declare tcListInt,
+     declare tcListListInt,
+     declare tcListCloListInt]
 
 
 -----------------------------------------------------------------------------
@@ -158,6 +158,7 @@ defChunk  =    100
 main :: IO ()
 main = do
   register declareStatic
+  putStrLn $ unlines showStaticTable
   (version, n, x, k) <- parseArgs <$> getArgs
   let xss = chunk k $ take n [x ..]
   -- dispatch on version
