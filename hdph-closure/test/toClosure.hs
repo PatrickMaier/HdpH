@@ -73,7 +73,7 @@ measureCloListListInt xss =
     let bs = encode clo
     evaluate (bs `deepseq` ())
     let !sz = BS.length bs
-    let !z  = sum $ unClosure $ either error id $ decode bs
+    let !z  = sum $ concat $ unClosure $ either error id $ decode bs
     evaluate ((z, sz))
 
 
