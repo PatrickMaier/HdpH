@@ -1,5 +1,5 @@
 name:          hdph-closure
-version:       0.2.1
+version:       0.2.2
 synopsis:      Explicit closures in Haskell distributed parallel Haskell
 description:   Explicit closures are serialisable representations of thunks.
                This package exports the fully polymorphic explicit closures
@@ -18,6 +18,11 @@ cabal-version: >= 1.8
 
 Flag BuildTest
   description:     Build test suite.
+  default:         False
+  manual:          True
+
+Flag BuildBench
+  description:     Build criterion-based benchmark suite.
   default:         False
   manual:          True
 
@@ -84,3 +89,20 @@ Executable toClosure
     buildable:     False
   hs-source-dirs:  src, test
   ghc-options:     -Wall -rtsopts -O0
+
+Executable toClosureBench
+  main-is:         toClosureBench.hs
+  if flag(BuildBench)
+    build-depends: template-haskell,
+                   array >= 0.1 && < 0.6,
+                   base >= 4 && < 5,
+                   cereal == 0.4.*,
+                   bytestring == 0.10.*,
+                   containers >= 0.1 && < 0.6,
+                   deepseq >= 1.1 && < 2,
+                   time >= 1.2 && < 2,
+                   criterion >= 1.1 && < 2
+  else
+    buildable:     False
+  hs-source-dirs:  src, bench
+  ghc-options:     -Wall -O2
