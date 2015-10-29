@@ -6,7 +6,7 @@
 
 module Control.Parallel.HdpH.Internal.Data.PriorityWorkQueue
     (
-    Priority
+      Priority
     , WorkQueueIO
     , enqueueTaskIO
     , dequeueTaskIO
@@ -14,19 +14,19 @@ module Control.Parallel.HdpH.Internal.Data.PriorityWorkQueue
     , sizeIO
     ) where
 
-import           Control.Applicative  ((<$>))
 import           Data.IORef           (IORef, atomicModifyIORef, newIORef,
                                        readIORef)
-import           Data.PQueue.Prio.Max (MaxPQueue, empty, insert, maxViewWithKey,
+import           Data.PQueue.Prio.Min (MinPQueue, empty, insert, minViewWithKey,
                                        size)
 
 type Priority = Int
-type WorkQueue a = MaxPQueue Priority a
+type WorkQueue a = MinPQueue Priority a
+
 enqueueTask :: WorkQueue a -> Priority -> a -> WorkQueue a
 enqueueTask q p x = insert p x q
 
 dequeueTask :: WorkQueue a -> Maybe ((Priority, a), WorkQueue a)
-dequeueTask = maxViewWithKey
+dequeueTask = minViewWithKey
 
 ---------------------------------------------------------------------
 -- concurrently accessible version of the WorkQueue (in the IO monad)
