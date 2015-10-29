@@ -19,7 +19,7 @@ import           Data.IORef           (IORef, atomicModifyIORef, newIORef,
 import           Data.PQueue.Prio.Min (MinPQueue, empty, insert, minViewWithKey,
                                        size)
 
-type Priority = Int
+type Priority = Integer
 type WorkQueue a = MinPQueue Priority a
 
 enqueueTask :: WorkQueue a -> Priority -> a -> WorkQueue a
