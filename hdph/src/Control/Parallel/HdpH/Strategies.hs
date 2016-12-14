@@ -835,6 +835,8 @@ pushDivideAndConquer_abs (ns, trivial_clo, decompose_clo, combine_clo, f_clo) =
 -- | Synchronous parallel remote proceduce call.
 -- @rcall task nodes@ pushes @'task'@ to every node in @'nodes'@, and
 -- blocks waiting for all results to come back.
+-- Note that @'task'@ runs in the message handler; it should therefore
+-- terminate quickly. For longer computations, fork a low priority thread.
 rcall :: Closure (Par (Closure a)) -> [Node] -> Par [Closure a]
 rcall task nodes = mapM spawnTask nodes >>= mapM get
   where
@@ -853,6 +855,7 @@ rcall_abs (task, gv) = Thunk $ unClosure task >>= rput gv
 -- side effects only; does not block and wait for results.
 -- (There is no guarantee when tasks are executed but they are executed
 -- in order of being received.)
+-- Note that @'task'@ executes in the message handler and must complete quickly.
 rcall_ :: Closure (Par ()) -> [Node] -> Par ()
 rcall_ task nodes = mapM_ (pushTo task) nodes
 
