@@ -90,9 +90,8 @@ import qualified Control.Parallel.HdpH.Strategies as Strategies (declareStatic)
 --   bookkeeping of where the ECRef is still alive. Freeing isn't a big issue
 --   as ECRefs are meant to be used inside skeletons with a well-defined
 --   lifetime. However, the fact that ECRefs can be freed explicitly has
---   implications for the type of the read operation; it returns an option
+--   implications for the type of the read operation; it must return an option
 --   type because the ECRef could have been freed already.
-
 
 
 -----------------------------------------------------------------------------
@@ -114,17 +113,35 @@ join dict = foldl1' $ \ x y -> maybe x id (joinWith dict x y)
 -- [Choosing symbol <<= to distinguish it from Haskell Ord class member <=.]
 --
 -- The semantics of the joinWith operation is
---
--- > joinWith :: X -> X -> Maybe X is
+-- > joinWith :: X -> X -> Maybe X
 -- > joinWith x y | y <<= x   = Nothing        -- in which case: x \/ y == x
 -- >              | otherwise = Just (x \/ y)  -- in which case: x \/ y != x
 --
 -- Note that joinWith combines the subsumption test (whether the join of
 -- x and y exceeds x) with the computation of the join. However, joinWith
--- is no longer commutative.
+-- is no longer commutative, but the commutative join can be recovered from it
+-- > join :: X -> X -> X
+-- > join x y = case joinWith x y of { Nothing -> x; Just z -> z }
 --
--- TODO: Some examples (including 'joinWith x y = Just y', which works
--- but there isn't an ordering anymore.
+-- Some examples
+--
+-- * If X is an instance of Ord, the join \/ is max. Consequently,
+--   joinWith is definable as
+--   > joinWith x y = if y <= x then Nothing else Just y
+--
+-- * If X is some Set Y, the join \/ is union and the order isSubsetOf.
+--   Consequently, joinWith is definable as
+--   > joinWith x y = if y isSubsetOf x then Nothing else Just (x `union` y)
+--
+-- * A very simple definition of joinWith just ignores the old value
+--   > joinWith x y = Just y
+--   This does work; every write will be propagated and overwrite the old
+--   value, making the ECRef behave much like an ordinary mutable reference.
+--   However, note that the join recovered from this joinWith is \ x y -> y,
+--   i.e. the projection on the second argument. This isn't a proper join
+--   as it is not commutative, hence this joinWith leaves the domain of
+--   join-semilattices, with implications for determinacy of computations
+--   using ECRefs with this joinWith.
 
 
 -----------------------------------------------------------------------------
