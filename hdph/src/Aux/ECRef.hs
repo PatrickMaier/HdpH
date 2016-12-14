@@ -1,6 +1,8 @@
 -- Eventually Coherent References
 --
 -- Author: Patrick Maier
+--
+-- This module might be integrated into the HdpH library, alongside Strategies.
 -----------------------------------------------------------------------------
 
 {-# LANGUAGE BangPatterns #-}
@@ -64,30 +66,33 @@ import qualified Control.Parallel.HdpH.Strategies as Strategies (declareStatic)
 -----------------------------------------------------------------------------
 -- Key facts about eventually coherent references
 --
-{-
-How should a registry for DLVars (distributed lattice variables) look?
+-- Eventually coherent references (ECRefs) are mutable variables similar
+-- to IORefs, except for the following differences.
+-- * ECRefs are distributed:
+--   Each ECRef has a specific /spatial scope/, i.e. set of nodes where it
+--   is accessible. The spatial scope is fixed upon an ECRef's creation.
+-- * ECRefs act like coherent caches:
+--   Reads and writes are non-blocking and go to a copy of the ECRef's value
+--   stored on the current node. Writes are automatically propagated to all
+--   nodes in scope. There is no guarantee when writes will be propagated
+--   (though it is pretty quick), but there is an ordering guarantee, namely
+--   that writes initiated by the same HdpH thread will be propagated in
+--   the order they were initiated.
+-- * ECRefs can accumulate values monotonically similar to LVars:
+--   Writes join the new value with the old value, and only update and
+--   propagate if the join is strictly greater than the old value.
+--   Like in the case of LVars this feature helps to recover deterministic
+--   behaviour in the face of non-deterministic distributed updates. (Can
+--   we prove this?) The actual join (and the ordering it implies) is a
+--   parameter fixed upon an ECRef's creation.
+-- * ECRefs must be freed explicitly:
+--   This is a wart; it could probably be fixed but would require distributed
+--   bookkeeping of where the ECRef is still alive. Freeing isn't a big issue
+--   as ECRefs are meant to be used inside skeletons with a well-defined
+--   lifetime. However, the fact that ECRefs can be freed explicitly has
+--   implications for the type of the read operation; it returns an option
+--   type because the ECRef could have been freed already.
 
-* Basic property: A DLVar is a mutable variable that is replicated on
-    all nodes, and whose updates on any one node are propagated automatically
-    to all nodes.
-
-* An update x can only increase the current value z of a DLVar by
-    replacing z with the join of x and z (in some join-semilattice).
-    Propagation of x only happens if join(x,z) is strictly greater
-    than z, that is, if the DLVar did actually change.
-
-* These two properties should guarantee that eventually all DLVars will
-    stabilise at the same value. (Can we prove this?)
--}
-
--- ???
---
--- Let (X, \/) be a join-semilattice with binary join \/.
--- Note that (X, \/) induces a partial order <= by y <= x iff x \/ y = x.
--- The semantics of the joinWith operation is
--- > joinWith :: X -> X -> Maybe X is
--- > joinWith x y | y <= x    = Nothing
--- >              | otherwise = Just (x \/ y)
 
 
 -----------------------------------------------------------------------------
@@ -97,9 +102,29 @@ How should a registry for DLVars (distributed lattice variables) look?
 data ECRefDict a = ECRefDict { toClosure :: a -> Closure a,
                                joinWith  :: a -> a -> Maybe a }
 
--- | Generalises 'joinWith' to non-empty lists of values
+-- | Join (computed via the binary 'joinWith') of a non-empty list.
 join :: ECRefDict a -> [a] -> a
 join dict = foldl1' $ \ x y -> maybe x id (joinWith dict x y)
+
+-- Motivation for the joinWith operation
+--
+-- Let (X, \/) be a join-semilattice with binary join \/, i.e. \/ is a
+-- binary function on X that is associative, commutative and idempotent.
+-- (X, \/) induces a partial order <<= defined by y <<= x iff x \/ y == x.
+-- [Choosing symbol <<= to distinguish it from Haskell Ord class member <=.]
+--
+-- The semantics of the joinWith operation is
+--
+-- > joinWith :: X -> X -> Maybe X is
+-- > joinWith x y | y <<= x   = Nothing        -- in which case: x \/ y == x
+-- >              | otherwise = Just (x \/ y)  -- in which case: x \/ y != x
+--
+-- Note that joinWith combines the subsumption test (whether the join of
+-- x and y exceeds x) with the computation of the join. However, joinWith
+-- is no longer commutative.
+--
+-- TODO: Some examples (including 'joinWith x y = Just y', which works
+-- but there isn't an ordering anymore.
 
 
 -----------------------------------------------------------------------------
@@ -209,8 +234,14 @@ readECRef ref = do
 -----------------------------------------------------------------------------
 -- Non-local ECRef operations (non-blocking)
 
--- | ??? hier bin ich ???
--- eventually coherent write; fire-and-forget; no guarantee as to when the update will have succeeded on peers.
+-- | Writes value 'y' to the given ECRef (if current node is in scope).
+-- The write joins the old value with 'y' and will only update the ECRef
+-- if joinWith does not return Nothing.
+-- If an update happens locally the value 'y' is asynchronously (but
+-- immediately) propagated to all nodes in scope where it will be joined with
+-- the local value, too.
+-- Returns immediately without blocking (and without guarantees as to when
+-- propagation will be complete).
 writeECRef :: ECRef a -> a -> Par ()
 writeECRef ref y = do
   maybe_obj <- lookupECRef ref
@@ -304,6 +335,10 @@ freeECRef_abs ref = Thunk $ do
 -- of all values read; returns Nothing if the current node is not in scope,
 -- or the ECRef has been freed.
 -- May block (and risk descheduling the calling thread).
+-- Note that in any thread executing { x <- gatherECRef r; y <- readECRef r }
+-- it is guaranteed that x is less than or equal to y (in the order induced
+-- by joinWith) but it is not guaranteed that x is equal to y (because another
+-- thread could have initiated a write just after the gather returned).
 gatherECRef :: ECRef a -> Par (Maybe a)
 gatherECRef ref = do
   maybe_obj <- lookupECRef ref
