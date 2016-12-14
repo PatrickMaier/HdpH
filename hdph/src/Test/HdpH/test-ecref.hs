@@ -14,7 +14,9 @@ import Control.Exception (evaluate)
 import Control.Monad (replicateM, unless)
 import Data.IORef
        (IORef, newIORef, readIORef, atomicWriteIORef, atomicModifyIORef')
+import Data.List (delete)
 import Data.Monoid (mconcat)
+import Data.Time.Clock (NominalDiffTime, diffUTCTime, getCurrentTime)
 import System.Environment (getArgs)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 import System.IO.Unsafe (unsafePerformIO)
@@ -22,13 +24,13 @@ import System.IO.Unsafe (unsafePerformIO)
 import Control.Parallel.HdpH
        (RTSConf(..), defaultRTSConf, updateConf,
         Par, runParIO_,
-        allNodes, io, pushTo,
-        Thunk(Thunk), Closure, mkClosure,
+        myNode, allNodes, io, fork, new, put, get,
+        Thunk(Thunk), Closure, mkClosure, unitC,
         toClosure, ToClosure(locToClosure),
         static, StaticToClosure, staticToClosure,
         StaticDecl, declare, register, here)
 import qualified Control.Parallel.HdpH as HdpH (declareStatic)
-import Control.Parallel.HdpH.Strategies (parMapM, pushMapM)
+import Control.Parallel.HdpH.Strategies (parMapM, pushMapM, rcall)
 import qualified Control.Parallel.HdpH.Strategies as Strategies (declareStatic)
 
 import Aux.ECRef
@@ -89,7 +91,35 @@ par_max_collatz n0 = do
 
 
 -----------------------------------------------------------------------------
--- boring dictionaries and Closures
+-- hammering an ECRef to measure throughput
+
+push_counter :: Integer -> Par ()
+push_counter n0 = do
+  me <- myNode
+  all <- allNodes
+  let nodes = if n0 > 0 then all else delete me all
+  ((count, limit), t) <- timePar $ do
+    bound <- newECRef dictC all 0
+    let task = $(mkClosure [| push_counter_abs (bound, n0) |])
+    _ <- rcall task nodes
+    count <- readECRef bound
+    limit <- gatherECRef bound
+    freeECRef bound
+    return (count, limit)
+  io $ putStrLn $ "push_counter " ++ show n0 ++ " = " ++ show (count, limit) ++
+                  " {" ++ show t ++ "}"
+
+push_counter_abs :: (ECRef Integer, Integer) -> Thunk (Par (Closure ()))
+push_counter_abs (bound, n0) = Thunk $ do
+  wait <- new
+  fork $ do
+    mapM_ (writeECRef bound) [1 .. abs n0]
+    put wait unitC
+  get wait
+
+
+-----------------------------------------------------------------------------
+-- boring dictionaries, Closures, etc
 
 dict :: ECRefDict Integer
 dict = ECRefDict { ECRef.toClosure = toClosureInteger,
@@ -104,11 +134,12 @@ toClosureInteger n = $(mkClosure [| toClosureInteger_abs n |])
 toClosureInteger_abs :: Integer -> Thunk Integer
 toClosureInteger_abs n = Thunk n
 
-unit :: ()
-unit = ()
-
-unitC :: Closure ()
-unitC = $(mkClosure [| unit |])
+-- time a Par action
+timePar :: Par a -> Par (a, NominalDiffTime)
+timePar action = do t0 <- io $ getCurrentTime
+                    x <- action
+                    t1 <- io $ getCurrentTime
+                    return (x, diffUTCTime t1 t0)
 
 
 -----------------------------------------------------------------------------
@@ -126,9 +157,9 @@ declareStatic = mconcat [HdpH.declareStatic,
                          ECRef.declareStatic,
                          declare (staticToClosure :: StaticToClosure Integer),
                          declare $(static 'push_max_collatz_abs),
+                         declare $(static 'push_counter_abs),
                          declare $(static 'dict),
-                         declare $(static 'toClosureInteger_abs),
-                         declare $(static 'unit)]
+                         declare $(static 'toClosureInteger_abs)]
 
 
 -----------------------------------------------------------------------------
@@ -142,13 +173,22 @@ parseOpts args = do
     Left err_msg                 -> error $ "parseOpts: " ++ err_msg
     Right (conf, remaining_args) -> return (conf, remaining_args)
 
--- parse arguments; either nothing or start of Collatz sequence
+-- parse arguments; expects 1 integer n0 (default: n0 = -1234567890)
+-- * n >= 10^9:  write terms of Collatz sequence starting at n0 to ECRef using
+--               round-robin scheduling (one task per term of sequence)
+-- * n <= -10^9: write terms of Collatz sequence starting at -n0 to ECRef using
+--               work stealing (one task per term of sequence)
+-- * 0 < n0 < 10^9:  one task per node counting from 1 to n0,
+--                   continuously writing count to ECRef
+-- * 0 > n0 > -10^9: one task per node (excluding root) counting from 1 to n0,
+--                   continuously writing count to ECRef
+-- * n0 == 0: do nothing
 parseArgs :: [String] -> Integer
 parseArgs []     = defN0
 parseArgs (s1:_) = read s1
 
 defN0 :: Integer
-defN0 = 999
+defN0 = -1234567890
 
 main :: IO ()
 main = do
@@ -158,6 +198,8 @@ main = do
   opts_args <- getArgs
   (conf, args) <- parseOpts opts_args
   let n0 = parseArgs args
-  if n0 < 0
-    then runParIO_ conf $ par_max_collatz (- n0)
-    else runParIO_ conf $ push_max_collatz n0
+  let action | n0 == 0     = return ()
+             | n0 >= 10^9  = push_max_collatz n0
+             | n0 <= -10^9 = par_max_collatz (- n0)
+             | otherwise   = push_counter n0
+  runParIO_ conf action
