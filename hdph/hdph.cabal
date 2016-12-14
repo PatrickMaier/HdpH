@@ -12,9 +12,10 @@ author:        Patrick Maier <C.Patrick.Maier@gmail.com>,
 maintainer:    Patrick Maier <C.Patrick.Maier@gmail.com>
 stability:     experimental
 category:      Control, Parallelism, Distributed Computing, Monads
-tested-with:   GHC == 7.6.3 || == 7.8.2
+tested-with:   GHC == 7.6.3 || == 7.8.2 || == 7.10.2
 build-type:    Simple
 cabal-version: >= 1.8
+
 Library
   exposed-modules: Control.Parallel.HdpH,
                    Control.Parallel.HdpH.Conf,
@@ -112,7 +113,6 @@ Executable dist
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
 
-
 Executable fib
   main-is:         Test/HdpH/fib.hs
   build-depends:   template-haskell,
@@ -160,7 +160,6 @@ Executable sumeuler
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
-
 
 Executable sumeuler-2level
   main-is:         Test/HdpH/sumeuler-2level.hs
