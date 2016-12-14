@@ -51,6 +51,7 @@ module Control.Parallel.HdpH.Closure
     termC,
     compC,
     apC,
+    unitC,
 
     -- ** Construction of value Closures
     -- | A /value Closure/ is a Closure, which when eliminated (from a
@@ -639,6 +640,15 @@ apC_abs :: (Closure (a -> b), Closure a) -> Thunk b
 apC_abs (clo_f, clo_x) = Thunk (unClosure clo_f $ unClosure clo_x)
 
 
+-- | Unit Closure.
+unitC :: Closure ()
+unitC = $(mkClosure [| unit |])
+
+{-# INLINE unit #-}
+unit :: ()
+unit = ()
+
+
 -----------------------------------------------------------------------------
 -- Static declaration (must be at end of module)
 
@@ -655,6 +665,7 @@ instance ToClosure (Maybe (Closure a)) where locToClosure = $(here)
 declareStatic :: StaticDecl
 declareStatic = mconcat
   [declare $(static 'id),
+   declare $(static 'unit),
    declare $(static 'constUnit),
    declare $(static 'compC_abs),
    declare $(static 'apC_abs),
