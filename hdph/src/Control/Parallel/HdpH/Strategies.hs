@@ -82,6 +82,10 @@ module Control.Parallel.HdpH.Strategies
     parDivideAndConquer,
     pushDivideAndConquer,
 
+    -- * Remote procedure calls
+    rcall,
+    rcall_,
+
     -- * This module's Static declaration
     declareStatic    -- :: StaticDecl
   ) where
@@ -828,6 +832,31 @@ pushDivideAndConquer_abs (ns, trivial_clo, decompose_clo, combine_clo, f_clo) =
   Thunk $ pushDivideAndConquer ns trivial_clo decompose_clo combine_clo f_clo
 
 
+-- | Synchronous parallel remote proceduce call.
+-- @rcall task nodes@ pushes @'task'@ to every node in @'nodes'@, and
+-- blocks waiting for all results to come back.
+rcall :: Closure (Par (Closure a)) -> [Node] -> Par [Closure a]
+rcall task nodes = mapM spawnTask nodes >>= mapM get
+  where
+    spawnTask node = do
+      v <- new
+      gv <- glob v
+      pushTo $(mkClosure [| rcall_abs (task, gv) |]) node
+      return v
+
+rcall_abs :: (Closure (Par (Closure a)), GIVar (Closure a)) -> Thunk (Par ())
+rcall_abs (task, gv) = Thunk $ unClosure task >>= rput gv
+
+
+-- | Asynchronous parallel remote proceduce call.
+-- @rcall_ task nodes@ pushes @'task'@ to every node in @'nodes'@ for
+-- side effects only; does not block and wait for results.
+-- (There is no guarantee when tasks are executed but they are executed
+-- in order of being received.)
+rcall_ :: Closure (Par ()) -> [Node] -> Par ()
+rcall_ task nodes = mapM_ (pushTo task) nodes
+
+
 -----------------------------------------------------------------------------
 -- Static declaration (must be at end of module)
 
@@ -850,4 +879,5 @@ declareStatic =
      declare $(static 'parDivideAndConquer_abs),
      declare $(static 'pushDivideAndConquer_abs),
      declare $(static 'parMapM2Level_abs),
-     declare $(static 'parMapM2LevelRelaxed_abs)]
+     declare $(static 'parMapM2LevelRelaxed_abs),
+     declare $(static 'rcall_abs)]
