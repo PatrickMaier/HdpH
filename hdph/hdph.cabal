@@ -12,9 +12,10 @@ author:        Patrick Maier <C.Patrick.Maier@gmail.com>,
 maintainer:    Patrick Maier <C.Patrick.Maier@gmail.com>
 stability:     experimental
 category:      Control, Parallelism, Distributed Computing, Monads
-tested-with:   GHC == 7.6.3 || == 7.8.2
+tested-with:   GHC == 7.6.3 || == 7.8.2 || == 7.10.2
 build-type:    Simple
 cabal-version: >= 1.8
+
 Library
   exposed-modules: Control.Parallel.HdpH,
                    Control.Parallel.HdpH.Conf,
@@ -55,7 +56,7 @@ Library
                    network-info == 0.2.*,
                    network-multicast >= 0.0.7 && < 0.2,
                    network-transport == 0.4.*,
-                   network-transport-tcp == 0.4.*,
+                   network-transport-tcp == 0.5.*,
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
@@ -79,7 +80,7 @@ Executable hello
                    network-info == 0.2.*,
                    network-multicast >= 0.0.7 && < 0.2,
                    network-transport == 0.4.*,
-                   network-transport-tcp == 0.4.*,
+                   network-transport-tcp == 0.5.*,
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
@@ -103,7 +104,7 @@ Executable dist
                    network-info == 0.2.*,
                    network-multicast >= 0.0.7 && < 0.2,
                    network-transport == 0.4.*,
-                   network-transport-tcp == 0.4.*,
+                   network-transport-tcp == 0.5.*,
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
@@ -111,7 +112,6 @@ Executable dist
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
-
 
 Executable fib
   main-is:         Test/HdpH/fib.hs
@@ -128,7 +128,7 @@ Executable fib
                    network-info == 0.2.*,
                    network-multicast >= 0.0.7 && < 0.2,
                    network-transport == 0.4.*,
-                   network-transport-tcp == 0.4.*,
+                   network-transport-tcp == 0.5.*,
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
@@ -152,7 +152,7 @@ Executable sumeuler
                    network-info == 0.2.*,
                    network-multicast >= 0.0.7 && < 0.2,
                    network-transport == 0.4.*,
-                   network-transport-tcp == 0.4.*,
+                   network-transport-tcp == 0.5.*,
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
@@ -160,7 +160,6 @@ Executable sumeuler
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
-
 
 Executable sumeuler-2level
   main-is:         Test/HdpH/sumeuler-2level.hs
@@ -177,7 +176,7 @@ Executable sumeuler-2level
                    network-info == 0.2.*,
                    network-multicast >= 0.0.7 && < 0.2,
                    network-transport == 0.4.*,
-                   network-transport-tcp == 0.4.*,
+                   network-transport-tcp == 0.5.*,
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
@@ -201,7 +200,7 @@ Executable queens
                    network-info == 0.2.*,
                    network-multicast >= 0.0.7 && < 0.2,
                    network-transport == 0.4.*,
-                   network-transport-tcp == 0.4.*,
+                   network-transport-tcp == 0.5.*,
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
@@ -225,69 +224,11 @@ Executable nbody
                    network-info == 0.2.*,
                    network-multicast >= 0.0.7 && < 0.2,
                    network-transport == 0.4.*,
-                   network-transport-tcp == 0.4.*,
+                   network-transport-tcp == 0.5.*,
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
                    unix >= 2.6 && < 2.8,
                    unordered-containers >= 0.1 && < 1,
-                   hdph-closure >= 0.2.0 && < 0.3
-  hs-source-dirs:  src
-  ghc-options:     -Wall -threaded -rtsopts
-
-Executable sum-liouville
-  main-is:         Test/HdpH/sum-liouville.hs
-  build-depends:   template-haskell,
-                   array >= 0.4 && < 0.6,
-                   base >= 4 && < 5,
-                   cereal == 0.4.*,
-                   clock >= 0.4.1 && < 0.6,
-                   bytestring == 0.10.*,
-                   containers >= 0.1 && < 0.6,
-                   deepseq >= 1.1 && < 2,
-                   hashable >= 1.2.1 && < 2,
-                   mtl >= 2 && < 3,
-                   network >= 2.4 && < 2.7,
-                   network-info == 0.2.*,
-                   network-multicast >= 0.0.7 && < 0.2,
-                   network-transport == 0.4.*,
-                   network-transport-tcp == 0.4.*,
-                   random >= 1 && < 2,
-                   random-fu >= 0.2 && < 0.3,
-                   random-source >= 0.3 && < 0.4,
-                   time >= 1.2 && < 2,
-                   unix >= 2.6 && < 2.8,
-                   unordered-containers >= 0.1 && < 1,
-                   hdph-closure >= 0.2.0 && < 0.3
-  hs-source-dirs:  src
-  ghc-options:     -Wall -threaded -rtsopts
-
-Executable mandel
-  main-is:         Test/HdpH/mandel.hs
-  build-depends:   template-haskell,
-                   array >= 0.4 && < 0.6,
-                   base >= 4 && < 5,
-                   binary >= 0.7 && <0.8,
-                   cereal == 0.4.*,
-                   clock >= 0.4.1 && < 0.6,
-                   bytestring == 0.10.*,
-                   containers >= 0.1 && < 0.6,
-                   deepseq >= 1.1 && < 2,
-                   hashable >= 1.2.1 && < 2,
-                   mtl >= 2 && < 3,
-                   monad-par >= 0.3 && < 0.4,
-                   monad-par-extras >= 0.3 && < 0.4,
-                   network >= 2.4 && < 2.7,
-                   network-info == 0.2.*,
-                   network-multicast >= 0.0.7 && < 0.2,
-                   network-transport == 0.4.*,
-                   network-transport-tcp == 0.4.*,
-                   random >= 1 && < 2,
-                   split >= 0.2 && < 3,
-                   time >= 1.2 && < 2,
-                   unix >= 2.6 && < 2.8,
-                   unordered-containers >= 0.1 && < 1,
-                   vector >= 0.10 && < 0.11,
-                   vector-binary-instances >= 0.2 && < 0.3,
                    hdph-closure >= 0.2.0 && < 0.3
   hs-source-dirs:  src
   ghc-options:     -Wall -threaded -rtsopts
