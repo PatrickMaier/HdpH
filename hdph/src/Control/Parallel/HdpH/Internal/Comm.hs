@@ -234,10 +234,11 @@ withCommDo conf0 action = do
     `finally` killThread listener_tid
     -- TODO: reset state and free resources to reflect shutdown of comms layer
   where doStartup cfg thisNode = do
-          let backend = startupBackend cfg
-          case backend of
-            UDP -> startupUDP (numProcs cfg) thisNode >>= return . map decodeNode
-            TCP -> startupTCP cfg thisNode >>= return . map decodeNode
+          if numProcs cfg == 1
+            then return $ [decodeNode thisNode]
+            else case startupBackend cfg of
+                    UDP -> startupUDP (numProcs cfg) thisNode >>= return . map decodeNode
+                    TCP -> startupTCP cfg thisNode >>= return . map decodeNode
 
 -- Return the IP address associated with the interface named in RTS config.
 discoverMyIP :: RTSConf -> IO IPv4
