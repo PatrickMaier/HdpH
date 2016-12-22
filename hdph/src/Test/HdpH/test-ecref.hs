@@ -106,8 +106,8 @@ push_counter n0 = do
     limit <- gatherECRef bound
     freeECRef bound
     return (count, limit)
-  io $ putStrLn $ "push_counter " ++ show n0 ++ " = " ++ show (count, limit) ++
-                  " {" ++ show t ++ "}"
+  io $ putStrLn $ show me ++ " push_counter " ++ show n0 ++ " = " ++
+                  show (count, limit) ++ " {" ++ show t ++ "}"
 
 push_counter_abs :: (ECRef Integer, Integer) -> Thunk (Par (Closure ()))
 push_counter_abs (bound, n0) = Thunk $ do

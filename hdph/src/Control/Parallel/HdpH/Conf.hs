@@ -160,7 +160,7 @@ defaultRTSConf =
     minSched       = 2,        -- reply with SCHEDULE when >= 2 sparks in pool
     minFishDly     = 10000,    -- delay at least 10 milliseconds after failed FISH
     maxFishDly     = 1000000,  -- delay up to 1 second after failed FISH
-    numProcs       = 0,        -- override this default for UDP node discovery
+    numProcs       = 1,        -- override this default for UDP node discovery
     numConns       = -1,       -- default: cache all TCP connections
     interface      = "eth0",   -- default network interface: 1st Ethernet adapter
     confFile       = "",       -- default config file: none
