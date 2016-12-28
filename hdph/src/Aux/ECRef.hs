@@ -24,6 +24,7 @@ module Aux.ECRef
     creatorECRef,     -- :: ECRef a -> Node
     scopeECRef,       -- :: ECRef a -> Par [Node]
     readECRef,        -- :: ECRef a -> Par (Maybe a)
+    readECRef',       -- :: ECRef a -> Par a
 
     -- * non-local write (non-blocking)
     writeECRef,       -- :: ECRef a -> a -> Par ()
@@ -34,6 +35,7 @@ module Aux.ECRef
 
     -- * non-local read (blocking)
     gatherECRef,      -- :: ECRef a -> Par (Maybe a)
+    gatherECRef',     -- :: ECRef a -> Par a
 
     -- * this module's Static declaration
     declareStatic     -- :: StaticDecl
@@ -68,9 +70,11 @@ import qualified Control.Parallel.HdpH.Strategies as Strategies (declareStatic)
 --
 -- Eventually coherent references (ECRefs) are mutable variables similar
 -- to IORefs, except for the following differences.
+--
 -- * ECRefs are distributed:
 --   Each ECRef has a specific /spatial scope/, i.e. set of nodes where it
 --   is accessible. The spatial scope is fixed upon an ECRef's creation.
+--
 -- * ECRefs act like coherent caches:
 --   Reads and writes are non-blocking and go to a copy of the ECRef's value
 --   stored on the current node. Writes are automatically propagated to all
@@ -78,6 +82,7 @@ import qualified Control.Parallel.HdpH.Strategies as Strategies (declareStatic)
 --   (though it is pretty quick), but there is an ordering guarantee, namely
 --   that writes initiated by the same HdpH thread will be propagated in
 --   the order they were initiated.
+--
 -- * ECRefs can accumulate values monotonically similar to LVars:
 --   Writes join the new value with the old value, and only update and
 --   propagate if the join is strictly greater than the old value.
@@ -85,6 +90,7 @@ import qualified Control.Parallel.HdpH.Strategies as Strategies (declareStatic)
 --   behaviour in the face of non-deterministic distributed updates. (Can
 --   we prove this?) The actual join (and the ordering it implies) is a
 --   parameter fixed upon an ECRef's creation.
+--
 -- * ECRefs must be freed explicitly:
 --   This is a wart; it could probably be fixed but would require distributed
 --   bookkeeping of where the ECRef is still alive. Freeing isn't a big issue
@@ -142,6 +148,16 @@ join dict = foldl1' $ \ x y -> maybe x id (joinWith dict x y)
 --   as it is not commutative, hence this joinWith leaves the domain of
 --   join-semilattices, with implications for determinacy of computations
 --   using ECRefs with this joinWith.
+--
+-- * An even simpler definition of joinWith ignores everything
+--   > joinWith x y = Nothing
+--   This does work but means that no write will ever succeed, rendering
+--   the ECRef an immutable distributed reference.
+--   Note that the join recovered from this joinWith is \ x y -> x,
+--   i.e. the projection on the second argument. This isn't a proper join
+--   as it is not commutative, hence this joinWith also leaves the domain of
+--   join-semilattices. However, in this case there are no implications for
+--   determinacy, as no writes ever succeed.
 
 
 -----------------------------------------------------------------------------
@@ -246,6 +262,17 @@ readECRef ref = do
   case maybe_obj of
     Nothing           -> return Nothing
     Just (_, cell, _) -> fmap Just $ io $ readIORef cell
+
+-- | Like 'readECRef' but does not wrap the value read in 'Maybe';
+-- aborts with a runtime error if 'readECRef' would have returned Nothing.
+readECRef' :: ECRef a -> Par a
+readECRef' ref = do
+  maybe_val <- readECRef ref
+  case maybe_val of
+    Just val -> return val
+    Nothing  -> do me <- myNode
+                   error $ show me ++ " ECRef.readECRef': " ++
+                           show ref ++ " not in scope"
 
 
 -----------------------------------------------------------------------------
@@ -379,6 +406,17 @@ gatherECRef_abs (ref, xC) = Thunk $ do
 deleteEntry :: ECRef a -> ECRefReg -> (ECRefReg, ())
 deleteEntry (ECRef label) reg =
   (reg { table = Map.delete label (table reg) }, ())
+
+-- | Like 'gatherECRef' but does not wrap the value returned in 'Maybe';
+-- aborts with a runtime error if 'gatherECRef' would have returned Nothing.
+gatherECRef' :: ECRef a -> Par a
+gatherECRef' ref = do
+  maybe_val <- gatherECRef ref
+  case maybe_val of
+    Just val -> return val
+    Nothing  -> do me <- myNode
+                   error $ show me ++ " ECRef.gatherECRef': " ++
+                           show ref ++ " not in scope"
 
 
 -----------------------------------------------------------------------------
