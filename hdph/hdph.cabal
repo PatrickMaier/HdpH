@@ -306,6 +306,8 @@ Executable maxclique
                    network-transport-tcp == 0.5.*,
                    random >= 1 && < 2,
                    time >= 1.2 && < 2,
+                   -- drop 'transformers' when MonadIO is in 'base'
+                   transformers >= 0.5 && < 0.5.2,
                    unix >= 2.6 && < 2.8,
                    unordered-containers >= 0.1 && < 1,
                    hdph-closure >= 0.2.0 && < 0.3

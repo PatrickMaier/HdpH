@@ -926,10 +926,10 @@ main = do
   if permute
     then putStrLn $ "t_permute: " ++ show t_permute
     else putStrLn $ "t_construct: " ++ show t_permute
-  if version < 5 then do
-    -- compute max clique sequentially or parallel (via Haskell concurrency)
-    ((bigCstar, info), t_compute) <- timeM' $
-      case version of
+  if version < 5
+    then do
+      -- compute max clique sequentially or parallel (via Haskell concurrency)
+      ((bigCstar, info), t_compute) <- timeM' $ case version of
         0 -> -- standard sequential Branch&Bound algorithm
              return $!! maxClq bigG
         1 -> -- sequential maxclique search based on tree iterator
@@ -943,35 +943,34 @@ main = do
         4 -> -- same as '3' but gen no more than '10 * workers' tasks in advance
              force <$> maxClqBufBndIterPar bigG depth workers debug
         _ -> usage
-    -- print solution and statistics
-    let bigCstar_alpha_inv = map (app (inv alpha <<< permHH)) bigCstar
-    putStrLn $ "     C*: " ++ show bigCstar_alpha_inv
-    putStrLn $ "sort C*: " ++ show (sort bigCstar_alpha_inv)
-    putStrLn $ "size: " ++ show (length bigCstar)
-    putStrLn $ "isClique: " ++ show (isClique bigG bigCstar)
-    when (version == 2 || version == 3 || version == 4) $
-      putStrLn $ "tasks: " ++ show info
-    putStrLn $ "t_compute: " ++ show t_compute
-    exitSuccess
-  else do
-    -- compute max clique in parallel (via HdpH)
-    runParIO_ conf $ do
-      -- distribute input graph to all nodes
-      bigGRef <- newECRefGraph bigG
-      -- dispatch on version
-      ((bigCstar, info), t_compute) <- timeM' $
-        case version of
+      -- print solution and statistics
+      let bigCstar_alpha_inv = map (app (inv alpha <<< permHH)) bigCstar
+      putStrLn $ "     C*: " ++ show bigCstar_alpha_inv
+      putStrLn $ "sort C*: " ++ show (sort bigCstar_alpha_inv)
+      putStrLn $ "size: " ++ show (length bigCstar)
+      putStrLn $ "isClique: " ++ show (isClique bigG bigCstar)
+      when (version == 2 || version == 3 || version == 4) $
+        putStrLn $ "tasks: " ++ show info
+      putStrLn $ "t_compute: " ++ show t_compute
+      exitSuccess
+    else do
+      -- compute max clique in parallel (via HdpH)
+      runParIO_ conf $ do
+        -- distribute input graph to all nodes
+        bigGRef <- newECRefGraph bigG
+        -- dispatch on version
+        ((bigCstar, info), t_compute) <- timeM' $ case version of
           5 -> -- non-skeletonised depth-bounded tree iteration
                force <$> maxClqBndIterHdpH bigGRef depth debug
           _ -> usage
-      -- deallocate input graph
-      freeECRef bigGRef
-      -- print solution and statistics
-      let bigCstar_alpha_inv = map (app (inv alpha <<< permHH)) bigCstar
-      io $ putStrLn $ "     C*: " ++ show bigCstar_alpha_inv
-      io $ putStrLn $ "sort C*: " ++ show (sort bigCstar_alpha_inv)
-      io $ putStrLn $ "size: " ++ show (length bigCstar)
-      io $ putStrLn $ "isClique: " ++ show (isClique bigG bigCstar)
-      io $ putStrLn $ "tasks: " ++ show info
-      io $ putStrLn $ "t_compute: " ++ show t_compute
-    exitSuccess
+        -- deallocate input graph
+        freeECRef bigGRef
+        -- print solution and statistics
+        let bigCstar_alpha_inv = map (app (inv alpha <<< permHH)) bigCstar
+        io $ putStrLn $ "     C*: " ++ show bigCstar_alpha_inv
+        io $ putStrLn $ "sort C*: " ++ show (sort bigCstar_alpha_inv)
+        io $ putStrLn $ "size: " ++ show (length bigCstar)
+        io $ putStrLn $ "isClique: " ++ show (isClique bigG bigCstar)
+        io $ putStrLn $ "tasks: " ++ show info
+        io $ putStrLn $ "t_compute: " ++ show t_compute
+      exitSuccess
