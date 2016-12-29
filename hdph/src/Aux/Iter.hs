@@ -7,6 +7,8 @@
 -- NOTE: Test code commented out
 --
 
+{-# LANGUAGE BangPatterns #-}
+
 module Aux.Iter
   ( -- * generic iterators
     Iter
@@ -18,19 +20,20 @@ module Aux.Iter
   , skipUntil
   , buffer
 
-    -- * generic iterators in the IO monad
-  , IterIO
-  , newIterIO
-  , copyIterIO
-  , stateIterIO
-  , doneIterIO
-  , nextIterIO
-  , runIterIO
-  , skipUntilIO
-  , bufferIO
+    -- * generic monadic iterators (in a monad above IO)
+  , IterM
+  , newIterM
+  , copyIterM
+  , stateIterM
+  , doneIterM
+  , nextIterM
+  , runIterM
+  , skipUntilM
+  , bufferM
   ) where
 
 import Prelude
+import Control.Monad.IO.Class (MonadIO(liftIO))
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 -- TESTING ONLY
 -- import System.IO.Unsafe (unsafePerformIO)
@@ -60,8 +63,8 @@ nextIter iter =
   case st iter of
     Nothing -> (iter, Nothing)  -- iter already done
     Just s  -> case nx iter s of
-                 Nothing      -> (iter {st = Nothing}, Nothing)  -- iter done
-                 Just (s', x) -> (iter {st = Just s'}, Just x)
+                 Nothing       -> (iter {st = Nothing}, Nothing)  -- iter done
+                 Just (!s', x) -> (iter {st = Just s'}, Just x)
 
 runIter :: Iter s a -> [a]
 runIter iter =
@@ -129,63 +132,70 @@ it4 = it1 `buffer` 5 `skipUntil` odd
 
 
 -------------------------------------------------------------------------------
--- Generic iterators in the IO monad
+-- Generic monadic iterators (in a monad above IO)
 --
 -- NOTE: These iterators are neither thread nor exception safe.
---       That is, actions that modify state (`nextIterIO` and `runIterIO`)
+--       That is, actions that modify state (`nextIterM` and `runIterM`)
 --       must be called from a single thread, and any actions used to
---       create iterators (ie. arguments to `newIterIO` or `skipUntilIO`)
+--       create iterators (ie. arguments to `newIterM` or `skipUntilM`)
 --       must not raise exceptions. (Asynchronous exceptions are just
 --       treated as bad luck.)
 
-data IterIO s a = IterIO { nxIO :: s -> IO (Maybe (s, a)),  -- static
-                           stIO :: IORef (Maybe s) }        -- dynamic
+data IterM m s a = IterM { nxM :: s -> m (Maybe (s, a)),  -- static
+                           stM :: IORef (Maybe s) }       -- dynamic
 
 -- Return iterator's internal state
-stateIterIO :: IterIO s a -> IO (Maybe s)
-stateIterIO = readIORef . stIO
+stateIterM :: (MonadIO m) => IterM m s a -> m (Maybe s)
+{-# INLINABLE stateIterM #-}
+stateIterM = liftIO . readIORef . stM
 
 -- NOTE: Not exception safe;
 --   returned iterator may crash if `next` ever throws an exception.
-newIterIO :: (s -> IO (Maybe (s, a))) -> s -> IO (IterIO s a)
-newIterIO next init = do
-  ref <- newIORef $ Just init
-  return $ IterIO {nxIO = next, stIO = ref}
+newIterM :: (MonadIO m) => (s -> m (Maybe (s, a))) -> s -> m (IterM m s a)
+{-# INLINABLE newIterM #-}
+newIterM next init = do
+  ref <- liftIO $ newIORef $ Just init
+  return $ IterM {nxM = next, stM = ref}
 
 -- Return a deep copy of iterator `iter` (ie. with distinct state).
-copyIterIO :: IterIO s a -> IO (IterIO s a)
-copyIterIO iter = do
-  ref <- newIORef =<< stateIterIO iter
-  return $ iter {stIO = ref}
+copyIterM :: (MonadIO m) => IterM m s a -> m (IterM m s a)
+{-# INLINABLE copyIterM #-}
+copyIterM iter = do
+  ref <- liftIO . newIORef =<< stateIterM iter
+  return $ iter {stM = ref}
 
-doneIterIO :: IterIO s a -> IO Bool
-doneIterIO iter = do
-  maybe_s <- readIORef $ stIO iter
+doneIterM :: (MonadIO m) => IterM m s a -> m Bool
+{-# INLINABLE doneIterM #-}
+doneIterM iter = do
+  maybe_s <- liftIO $ readIORef $ stM iter
   case maybe_s of { Nothing -> return True; _ -> return False }
 
 -- NOTE: Not thread safe;
---   `iter` may crash if multiple threads call this function or `runIterIO`.
-nextIterIO :: IterIO s a -> IO (Maybe a)
-nextIterIO iter = do
-  let ref = stIO iter
-  maybe_s <- readIORef ref
+--   `iter` may crash if multiple threads call this function or `runIterM`.
+nextIterM :: (MonadIO m) => IterM m s a -> m (Maybe a)
+{-# INLINABLE nextIterM #-}
+nextIterM iter = do
+  let ref = stM iter
+  maybe_s <- liftIO $ readIORef ref
   case maybe_s of
-    Nothing -> do { writeIORef ref $ Nothing; return $ Nothing }
+    Nothing -> do { liftIO $ writeIORef ref Nothing; return Nothing }
     Just s  -> do
-      maybe_next <- nxIO iter s
+      maybe_next <- nxM iter s
       case maybe_next of
-        Nothing      -> do { writeIORef ref $ Nothing; return $ Nothing }
-        Just (s', x) -> do { writeIORef ref $ Just s'; return $ Just x }
+        Nothing       -> do liftIO $ writeIORef ref Nothing
+                            return Nothing
+        Just (!s', x) -> do liftIO $ writeIORef ref (Just s')
+                            return (Just x)
 
 -- NOTE: Not thread safe;
---   `iter` may crash if multiple threads call this function or `nextIterIO`.
-runIterIO :: IterIO s a -> IO [a]
-runIterIO iter = buildList
+--   `iter` may crash if multiple threads call this function or `nextIterM`.
+runIterM :: (MonadIO m) => IterM m s a -> m [a]
+{-# INLINABLE runIterM #-}
+runIterM iter = buildList
   where
-    action = nextIterIO iter
- -- buildList :: IO [a]
+ -- buildList :: m [a]
     buildList = do
-      maybe_x <- action
+      maybe_x <- nextIterM iter
       case maybe_x of
         Nothing -> return []
         Just x  -> (x:) <$> buildList
@@ -193,12 +203,13 @@ runIterIO iter = buildList
 -- NOTE #1: Returned iterator shares state with `iter`.
 -- NOTE #2: Not exception safe;
 --   returned iterator may crash if `p` ever throws an exception.
-skipUntilIO :: (a -> IO Bool) -> IterIO s a -> IO (IterIO s a)
-skipUntilIO p iter = return $ iter {nxIO = loop}
+skipUntilM :: (MonadIO m) => (a -> m Bool) -> IterM m s a -> m (IterM m s a)
+{-# INLINABLE skipUntilM #-}
+skipUntilM p iter = return $ iter {nxM = loop}
   where
- -- loop :: s -> IO (Maybe (s, a))
+ -- loop :: s -> m (Maybe (s, a))
     loop s = do
-      maybe_next <- nxIO iter s
+      maybe_next <- nxM iter s
       case maybe_next of
         Nothing      -> return Nothing
         Just (s', x) -> do
@@ -207,24 +218,25 @@ skipUntilIO p iter = return $ iter {nxIO = loop}
 
 
 -------------------------------------------------------------------------------
--- Generic buffered iterators in the IO monad
+-- Generic monadic buffered iterators (in a monad above IO)
 
-bufferIO :: Int -> IterIO s a -> IO (IterIO (Q a) a)
-bufferIO bufsize iter
-  | bufsize < 1 = error "bufferIO: bufsize < 1"
-  | otherwise   = do { q0 <- refill mtQ; newIterIO roll q0 }
+bufferM :: (MonadIO m) => Int -> IterM m s a -> m (IterM m (Q a) a)
+{-# INLINABLE bufferM #-}
+bufferM bufsize iter
+  | bufsize < 1 = error "bufferM: bufsize < 1"
+  | otherwise   = do { q0 <- refill mtQ; newIterM roll q0 }
     where
-   -- roll :: Q a -> IO (Maybe (Q a, a))
+   -- roll :: Q a -> m (Maybe (Q a, a))
       roll q =
         case deQ q of
           Nothing      -> return Nothing
           Just (x, q') -> do { q'' <- refill q'; return $ Just (q'', x) }
-   -- refill :: Q a -> IO (Q a)
+   -- refill :: Q a -> m (Q a)
       refill q =
         if sizeQ q >= bufsize
           then return q                    -- buffer full
           else do
-            maybe_x <- nextIterIO iter
+            maybe_x <- nextIterM iter
             case maybe_x of
               Nothing -> return q          -- iter done
               Just x  -> refill $ enQ q x  -- tail recurse (until buffer full)
@@ -232,13 +244,13 @@ bufferIO bufsize iter
 {-
 -- monadic test iterators
 mit1  = unsafePerformIO $
-          newIterIO (\n -> return $ if n < 10 then Just (n+1, n) else Nothing) 0
+          newIterM (\n -> return $ if n < 10 then Just (n+1, n) else Nothing) 0
 mit2a = unsafePerformIO $
-          skipUntilIO (return . even) mit1
+          skipUntilM (return . even) mit1
 mit2b = unsafePerformIO $
-          copyIterIO mit1 >>= skipUntilIO (return . odd)
+          copyIterM mit1 >>= skipUntilM (return . odd)
 mit3  = unsafePerformIO $
-          bufferIO 5 mit1
+          bufferM 5 mit1
 mit4  = unsafePerformIO $
-          copyIterIO mit2b >>= bufferIO 3 >>= skipUntilIO (return . (> 4))
+          copyIterM mit2b >>= bufferM 3 >>= skipUntilM (return . (> 4))
 -}
