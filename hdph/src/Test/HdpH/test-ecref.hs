@@ -9,24 +9,19 @@
 
 module Main where
 
-import Prelude
+import Prelude hiding (all)
 import Control.Exception (evaluate)
-import Control.Monad (replicateM, unless)
-import Data.IORef
-       (IORef, newIORef, readIORef, atomicWriteIORef, atomicModifyIORef')
 import Data.List (delete)
-import Data.Monoid (mconcat)
 import Data.Time.Clock (NominalDiffTime, diffUTCTime, getCurrentTime)
 import System.Environment (getArgs)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
-import System.IO.Unsafe (unsafePerformIO)
 
 import Control.Parallel.HdpH
        (RTSConf(..), defaultRTSConf, updateConf,
         Par, runParIO_,
         myNode, allNodes, io, fork, new, put, get,
         Thunk(Thunk), Closure, mkClosure, unitC,
-        toClosure, ToClosure(locToClosure),
+        ToClosure(locToClosure),
         static, StaticToClosure, staticToClosure,
         StaticDecl, declare, register, here)
 import qualified Control.Parallel.HdpH as HdpH (declareStatic)
@@ -34,9 +29,9 @@ import Control.Parallel.HdpH.Strategies (parMapM, pushMapM, rcall)
 import qualified Control.Parallel.HdpH.Strategies as Strategies (declareStatic)
 
 import Aux.ECRef
-       (ECRefDict(ECRefDict), joinWith,
+       (ECRefDict(ECRefDict),
         ECRef, newECRef, freeECRef, readECRef, writeECRef, gatherECRef)
-import qualified Aux.ECRef as ECRef (toClosure, declareStatic)
+import qualified Aux.ECRef as ECRef (toClosure, joinWith, declareStatic)
 
 
 -----------------------------------------------------------------------------
@@ -69,7 +64,7 @@ push_max_collatz n0 = do
 push_max_collatz_abs :: ECRef Integer -> Thunk (Integer -> Par (Closure ()))
 push_max_collatz_abs bound = Thunk $ \ n -> do
   _ <- io $ evaluate $ fib (n `mod` 13 + 13)
-  writeECRef bound n
+  _ <- writeECRef bound n
   return unitC
 
 -- some Fibonacci computation to slow down task evaluation
@@ -122,8 +117,9 @@ push_counter_abs (bound, n0) = Thunk $ do
 -- boring dictionaries, Closures, etc
 
 dict :: ECRefDict Integer
-dict = ECRefDict { ECRef.toClosure = toClosureInteger,
-                   joinWith = \ x y -> if y <= x then Nothing else Just y }
+dict = ECRefDict {
+         ECRef.toClosure = toClosureInteger,
+         ECRef.joinWith = \ x y -> if y <= x then Nothing else Just y }
 
 dictC :: Closure (ECRefDict Integer)
 dictC = $(mkClosure [| dict |])
