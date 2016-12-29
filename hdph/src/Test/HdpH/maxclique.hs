@@ -768,6 +768,11 @@ maxClqSearchAtPar bigGRef boundRef path0 debug = do
                                   " {" ++ show new_bound ++ "}"
             loop iter
 
+{-# SPECIALIZE TreeIter.newTreeIterM :: TreeIter.Path a
+                                     -> TreeIter.GeneratorM Par a
+                                     -> Par (TreeIter.TreeIterM Par a) #-}
+{-# SPECIALIZE Iter.nextIterM :: Iter.IterM Par s a -> Par (Maybe a) #-}
+
 
 -----------------------------------------------------------------------------
 -- Static declaration (just before 'main')
