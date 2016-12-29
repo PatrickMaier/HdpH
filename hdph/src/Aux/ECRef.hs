@@ -27,7 +27,8 @@ module Aux.ECRef
     readECRef',       -- :: ECRef a -> Par a
 
     -- * non-local write (non-blocking)
-    writeECRef,       -- :: ECRef a -> a -> Par ()
+    writeECRef,       -- :: ECRef a -> a -> Par (Maybe a)
+    writeECRef',      -- :: ECRef a -> a -> Par ()
 
     -- * creation and destruction (blocking)
     newECRef,         -- :: Closure (ECRefDict a)-> [Node] -> a -> Par (ECRef a)
@@ -284,21 +285,25 @@ readECRef' ref = do
 -- If an update happens locally the value 'y' is asynchronously (but
 -- immediately) propagated to all nodes in scope where it will be joined with
 -- the local value, too.
--- Returns immediately without blocking (and without guarantees as to when
--- propagation will be complete).
-writeECRef :: ECRef a -> a -> Par ()
+-- Returns the new value if there is an update, 'Nothing' otherwise.
+-- The function returns immediately without blocking, even if there is an
+-- update which is being propagated; there is no guarantees as to when
+-- propagation will be complete. (There may be some guarantees available
+-- through knowledge of HdpH's message orders, but it's implemenation specific.)
+writeECRef :: ECRef a -> a -> Par (Maybe a)
 writeECRef ref y = do
   maybe_obj <- lookupECRef ref
   case maybe_obj of
-    Nothing                  -> return ()
+    Nothing                  -> return Nothing
     Just (dict, cell, peers) -> do
       maybe_new_x <- io $ atomicModifyIORef' cell (updateCell dict y)
       case maybe_new_x of
-        Nothing -> return ()  -- fast path; no real update
-        Just _  -> do
+        Nothing    -> return Nothing  -- fast path; no update
+        just_new_x -> do
           let yC = toClosure dict y
           let task = $(mkClosure [| writeECRef_abs (ref, yC) |])
           rcall_ task peers
+          return just_new_x
 
 writeECRef_abs :: (ECRef a, Closure a) -> Thunk (Par ())
 writeECRef_abs (ref, yC) = Thunk $ do
@@ -314,6 +319,11 @@ updateCell dict y old_x =
   case joinWith dict old_x y of
     Nothing    -> (old_x, Nothing)
     Just new_x -> (new_x, Just new_x)
+
+
+-- | Convenience variant of 'writeECRef', suppressing return value.
+writeECRef' :: ECRef a -> a -> Par ()
+writeECRef' ref y = do { _ <- writeECRef ref y; return () }
 
 
 -----------------------------------------------------------------------------
