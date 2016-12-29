@@ -44,13 +44,10 @@ module Aux.ECRef
 
 import Prelude
 import Control.DeepSeq (NFData(rnf))
-import Control.Monad (zipWithM)
 import Data.IORef (IORef, newIORef, readIORef, atomicModifyIORef')
 import Data.List (delete, foldl1')
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map (empty, insert, delete, lookup)
-import Data.Maybe (isJust)
-import Data.Monoid (mconcat)
 import Data.Serialize (Serialize)
 import qualified Data.Serialize (put, get)
 import System.IO.Unsafe (unsafePerformIO)
@@ -352,7 +349,6 @@ newECRef_abs (ref, dictC, xC, scope') = Thunk $ do
   me <- myNode
   let peers = delete me scope'
   cell <- io $ newIORef $ unClosure xC
-  let dict = unClosure dictC
   io $ atomicModifyIORef' regRef (createEntry (unClosure dictC) cell peers ref)
   return unitC
 
