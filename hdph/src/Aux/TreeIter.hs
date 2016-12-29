@@ -41,12 +41,12 @@ module Aux.TreeIter
   ) where
 
 import Prelude
-import Control.Monad ((<=<))
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.ST (runST)
 import Data.List (find, nub)
 import Data.STRef (newSTRef, modifySTRef', readSTRef)
 -- TESTING ONLY
+-- import Control.Monad ((<=<))
 -- import System.Random (RandomGen, random, getStdRandom)
 -- import System.IO.Unsafe (unsafePerformIO)
 
@@ -134,7 +134,7 @@ paths = ([]:) . map reverse . concat . (map go)
 
 -- True iff the given list of paths is a set (ie. has no duplicates).
 isPathSet :: (Eq a) => [Path a] -> Bool
-isPathSet paths = paths == nub paths
+isPathSet xs = xs == nub xs
 
 
 -------------------------------------------------------------------------------
@@ -143,7 +143,6 @@ isPathSet paths = paths == nub paths
 -- Generating functions (or actions) map each path to a list of extensions
 -- (ordered left to right).
 type Generator    a = Path a ->    [a]
-type GeneratorIO  a = Path a -> IO [a]
 type GeneratorM m a = Path a -> m [a]
 
 -- Generate a unique list of trees from the generating function `g`.
@@ -151,11 +150,6 @@ generate :: Generator a -> [Tree a]
 generate g = expand []
   where
     expand path = map (\x -> Tree x (expand (x:path))) $ g path
-
-generateIO :: GeneratorIO a -> IO [Tree a]
-generateIO g = expand []
-  where
-    expand path = mapM (\x -> Tree x <$> expand (x:path)) =<< g path
 
 generateM :: (Monad m) => GeneratorM m a -> m [Tree a]
 generateM g = expand []

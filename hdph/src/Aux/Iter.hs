@@ -32,7 +32,7 @@ module Aux.Iter
   , bufferM
   ) where
 
-import Prelude
+import Prelude hiding (init)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 -- TESTING ONLY
