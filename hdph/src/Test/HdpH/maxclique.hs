@@ -30,7 +30,7 @@ import Control.Concurrent (forkIO)
 import Control.Concurrent.Chan (Chan, newChan, writeChan, readChan)
 import Control.Concurrent.QSem (QSem, newQSem, signalQSem, waitQSem)
 import Control.DeepSeq (NFData(rnf), ($!!), force)
-import Control.Monad (when, forever, replicateM_)
+import Control.Monad (when, unless, forever, replicateM_)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 import Data.Array (Array, bounds, (!), listArray)
 import Data.IntSet (IntSet)
@@ -416,6 +416,10 @@ getCliquesize :: TreeIter.Path X -> Int
 getCliquesize []                  = 0
 getCliquesize (X _ sizeC _ _ : _) = sizeC
 
+getCandidates :: TreeIter.Path X -> VertexSet
+getCandidates []                 = VertexSet.empty
+getCandidates (X _ _ bigP _ : _) = bigP
+
 getColours :: TreeIter.Path X -> Int
 getColours []                     = -1
 getColours (X _ _ _ coloursP : _) = coloursP
@@ -774,6 +778,89 @@ maxClqSearchAtPar bigGRef boundRef path0 debug = do
 {-# SPECIALIZE Iter.nextIterM :: Iter.IterM Par s a -> Par (Maybe a) #-}
 
 
+---------------------------------------------------------------------------
+-- HdpH maxclique search (depth-bounded tree iter + standard alg for seq tasks)
+
+-- NOTE: 2nd component of result is number of tasks at `depth`.
+maxClqBndIterHdpHv2 :: ECRef Graph -> Int -> Bool -> Par ([Vertex], Int)
+maxClqBndIterHdpHv2 bigGRef depth debug = do
+  bigG <- readECRef' bigGRef
+  boundRef <- newECRefY (Y [] 0)
+  let isDepth path = return $ length path == depth
+  iter <- TreeIter.newPruneTreeIterM isDepth [] (gPar bigG boundRef)
+  ivars <- sparkLoop [] boundRef iter
+  let !tasks = length ivars
+  mapM_ get ivars  -- block until all sparked tasks are completed
+  Y bigC _ <- gatherECRef' boundRef  -- readECRef' should do here, too
+  freeECRef boundRef
+  return (bigC, tasks)
+    where
+      sparkLoop ivars boundRef iter = do
+        maybe_path0 <- Iter.nextIterM iter
+        case maybe_path0 of
+          Nothing    -> return $ reverse ivars
+          Just path0 -> do
+            let pth0 = compressPath path0  -- compress to save on serialisation
+            ivar <- new
+            gv <- glob ivar
+            spark one $(mkClosure [| maxClqBndIterHdpHv2_abs
+                                     (bigGRef, boundRef, pth0, debug, gv) |])
+            sparkLoop (ivar:ivars) boundRef iter
+
+maxClqBndIterHdpHv2_abs :: (ECRef Graph,
+                            ECRef Y,
+                            TreeIter.Path X,
+                            Bool,
+                            GIVar (Closure ()))
+                        -> Thunk (Par ())
+maxClqBndIterHdpHv2_abs (bigGRef, boundRef, pth0, debug, gv) =
+  Thunk $ maxClqSearchAtPar' bigGRef boundRef pth0 >> rput gv unitC
+
+
+-- variant of 'maxClqSearchAtPar' based on standard algo (rather than tree iter)
+maxClqSearchAtPar' :: ECRef Graph -> ECRef Y -> TreeIter.Path X -> Par ()
+maxClqSearchAtPar' bigGRef boundRef path0 = do
+  bigG <- readECRef' bigGRef
+  let y = Y (getClique path0) (getCliquesize path0)
+  let bigPee | null path0 = VertexSet.fromAscList $ verticesG bigG
+             | otherwise  = getCandidates path0
+  unless (VertexSet.null bigPee) $
+    expandPar bigG boundRef y bigPee
+
+-- variant of 'expand' for the Par monad (+ sharing incumbent via ECRef).
+-- NOTE: Expects 'bigPee' to be non-empty.
+expandPar :: Graph       -- input graph
+          -> ECRef Y     -- stores current best solution (incumbent & bound)
+          -> Y           -- currently explored solution (clique & size)
+          -> VertexSet   -- candidate vertices (to add to current clique)
+          -> Par ()
+expandPar bigG boundRef y bigPee =
+  loop y bigPee $ colourOrder bigG bigPee
+    where
+      -- for loop
+      loop :: Y            -- current clique with size
+           -> VertexSet    -- candidate vertices
+           -> ColourOrder  -- ordered colouring of candidate vertices
+           -> Par ()
+      loop _               _    []                = return ()
+      loop (Y bigC !sizeC) bigP ((v,colour):more) = do
+        Y _ bound <- readECRef' boundRef
+        if sizeC + colour <= bound
+          then return ()
+          else do
+            -- accept v
+            let y' = Y (v:bigC) $! (sizeC + 1)
+            _ <- writeECRef boundRef y'
+            let bigP' = VertexSet.intersection bigP $ adjacentG bigG v
+            -- recurse (unless bigP' empty)
+            unless (VertexSet.null bigP') $
+              expandPar bigG boundRef y' bigP'
+            -- reject v
+            let bigP'' = VertexSet.delete v bigP
+            -- continue the loop
+            loop y bigP'' more
+
+
 -----------------------------------------------------------------------------
 -- Static declaration (just before 'main')
 
@@ -787,7 +874,8 @@ declareStatic = mconcat [HdpH.declareStatic,
                          declare $(static 'toClosureY_abs),
                          declare $(static 'dictGraph),
                          declare $(static 'dictY),
-                         declare $(static 'maxClqBndIterHdpH_abs)]
+                         declare $(static 'maxClqBndIterHdpH_abs),
+                         declare $(static 'maxClqBndIterHdpHv2_abs)]
 
 
 ---------------------------------------------------------------------------
@@ -955,6 +1043,9 @@ main = do
       5 -> -- HdpH maxclique search based on nested tree iterator;
            -- depth-bounded outer iterator generates HdpH tasks
            force <$> maxClqBndIterHdpH bigGRef depth debug
+      6 -> -- HdpH maxclique search; depth-bounded tree iterator generates
+           -- HdpH tasks which execute variant of standard seq algorithm
+           force <$> maxClqBndIterHdpHv2 bigGRef depth debug
       _ -> usage
     -- deallocating input graph
     ((), t_deallocate) <- timeM' $ do
@@ -966,7 +1057,7 @@ main = do
     io $ putStrLn $ "sort C*: " ++ show (sort bigCstar_alpha_inv)
     io $ putStrLn $ "size: " ++ show (length bigCstar)
     io $ putStrLn $ "isClique: " ++ show (isClique bigG bigCstar)
-    when (info >= 0) $
+    unless (info < 0) $
       io $ putStrLn $ "tasks: " ++ show info
     io $ putStrLn $ "t_compute: " ++ show t_compute
   -- the end
