@@ -536,7 +536,7 @@ maxClqSearchAt bigG boundRef path0 debug = do
 -- NOTE: 2nd component of result is number of "tasks" at `depth`.
 maxClqBndIter :: Graph -> Int -> Bool -> IO ([Vertex], Int)
 maxClqBndIter bigG depth debug = do
-  let isDepth path = return $ length path == depth
+  let isDepth path = length path == depth
   boundRef <- newSLRef (Y [] 0)
   iter <- TreeIter.newPruneTreeIterM isDepth [] (g bigG boundRef)
   tasks <- loop 0 boundRef iter
@@ -560,7 +560,7 @@ maxClqBndIterPar :: Graph -> Int -> Int -> Bool -> IO ([Vertex], Int)
 maxClqBndIterPar bigG depth workers debug = do
   taskCh <- newChan
   replicateM_ workers $ forkIO $ forever $ do { task <- readChan taskCh; task }
-  let isDepth path = return $ length path == depth
+  let isDepth path = length path == depth
   boundRef <- newSLRef (Y [] 0)
   doneCh <- newChan
   iter <- TreeIter.newPruneTreeIterM isDepth [] (g bigG boundRef)
@@ -593,7 +593,7 @@ maxClqBufBndIterPar :: Graph -> Int -> Int -> Bool -> IO ([Vertex], Int)
 maxClqBufBndIterPar bigG depth workers debug = do
   taskCh <- newChan
   replicateM_ workers $ forkIO $ forever $ do { task <- readChan taskCh; task }
-  let isDepth path = return $ length path == depth
+  let isDepth path = length path == depth
   boundRef <- newSLRef (Y [] 0)
   doneCh <- newChan
   bufSem <- newQSem (10 * workers)
@@ -684,7 +684,7 @@ maxClqBndIterHdpH :: ECRef Graph -> Int -> Bool -> Par ([Vertex], Int)
 maxClqBndIterHdpH bigGRef depth debug = do
   bigG <- readECRef' bigGRef
   boundRef <- newECRefY (Y [] 0)
-  let isDepth path = return $ length path == depth
+  let isDepth path = length path == depth
   iter <- TreeIter.newPruneTreeIterM isDepth [] (gPar bigG boundRef)
   ivars <- sparkLoop [] boundRef iter
   let !tasks = length ivars
@@ -786,7 +786,7 @@ maxClqBndIterHdpHv2 :: ECRef Graph -> Int -> Bool -> Par ([Vertex], Int)
 maxClqBndIterHdpHv2 bigGRef depth debug = do
   bigG <- readECRef' bigGRef
   boundRef <- newECRefY (Y [] 0)
-  let isDepth path = return $ length path == depth
+  let isDepth path = length path == depth
   iter <- TreeIter.newPruneTreeIterM isDepth [] (gPar bigG boundRef)
   ivars <- sparkLoop [] boundRef iter
   let !tasks = length ivars
