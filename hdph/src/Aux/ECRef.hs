@@ -360,7 +360,7 @@ createRef me reg =
 
 createEntry :: ECRefDict a -> IORef a -> [Node] -> ECRef a -> ECRefReg
             -> (ECRefReg, ())
-createEntry dict cell peers (ECRef label) reg =
+createEntry !dict cell peers (ECRef label) reg =
   (reg { table = Map.insert label (ECRefObj dict cell peers) (table reg) }, ())
 
 
