@@ -227,6 +227,7 @@ regRef = unsafePerformIO $
 
 -- Registry lookup
 lookupECRef :: ECRef a -> Par (Maybe (ECRefDict a, IORef a, [Node]))
+{-# INLINE lookupECRef #-}
 lookupECRef (ECRef label) = do
   reg <- io $ readIORef regRef
   case Map.lookup label (table reg) of
@@ -245,6 +246,7 @@ lookupECRef (ECRef label) = do
 -- returns '[]' if the current node is not included in the spatial scope,
 -- or the ECRef has already been freed.
 scopeECRef :: ECRef a -> Par [Node]
+{-# INLINE scopeECRef #-}
 scopeECRef ref = do
   maybe_obj <- lookupECRef ref
   case maybe_obj of
@@ -255,6 +257,7 @@ scopeECRef ref = do
 -- | Reads the given 'ECRef' locally; returns 'Nothing' if the current node is
 -- not included in the spatial scope of the ECRef, or it has been freed already.
 readECRef :: ECRef a -> Par (Maybe a)
+{-# INLINE readECRef #-}
 readECRef ref = do
   maybe_obj <- lookupECRef ref
   case maybe_obj of
@@ -264,6 +267,7 @@ readECRef ref = do
 -- | Like 'readECRef' but does not wrap the value read in 'Maybe';
 -- aborts with a runtime error if 'readECRef' would have returned Nothing.
 readECRef' :: ECRef a -> Par a
+{-# INLINE readECRef' #-}
 readECRef' ref = do
   maybe_val <- readECRef ref
   case maybe_val of
@@ -288,6 +292,7 @@ readECRef' ref = do
 -- propagation will be complete. (There may be some guarantees available
 -- through knowledge of HdpH's message orders, but it's implemenation specific.)
 writeECRef :: ECRef a -> a -> Par (Maybe a)
+{-# INLINE writeECRef #-}
 writeECRef ref y = do
   maybe_obj <- lookupECRef ref
   case maybe_obj of
@@ -303,6 +308,7 @@ writeECRef ref y = do
           return just_new_x
 
 writeECRef_abs :: (ECRef a, Closure a) -> Thunk (Par ())
+{-# INLINE writeECRef_abs #-}
 writeECRef_abs (ref, yC) = Thunk $ do
   maybe_obj <- lookupECRef ref
   case maybe_obj of
@@ -312,6 +318,7 @@ writeECRef_abs (ref, yC) = Thunk $ do
       return ()
 
 updateCell :: ECRefDict a -> a -> a -> (a, Maybe a)
+{-# INLINE updateCell #-}
 updateCell dict y old_x =
   case joinWith dict old_x y of
     Nothing    -> (old_x, Nothing)
