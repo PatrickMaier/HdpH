@@ -49,7 +49,7 @@ import Control.Parallel.HdpH
 import qualified Control.Parallel.HdpH as HdpH (declareStatic)
 import Control.Parallel.HdpH.Dist (one)
 import Aux.ECRef
-       (ECRef, ECRefDict(ECRefDict, toClosure, joinWith),
+       (ECRef, ECRefDict,
         newECRef, freeECRef, readECRef', writeECRef, gatherECRef')
 import qualified Aux.ECRef as ECRef (declareStatic)
 import Aux.Iter (IterM, nextIterM)
