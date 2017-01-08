@@ -12,50 +12,75 @@
 
 module Aux.ECRef
   ( -- * eventually coherent references
-    ECRef,            -- * -> *; instances: Eq, Ord, Show, NFData, Serialize
+    ECRef,        -- * -> *; instances: Eq, Ord, Show, NFData, Serialize
 
     -- * dictionary of operations necessary to support ECRefs
-    ECRefDict(      -- * -> *; no instances
+    ECRefDict(    -- * -> *; no instances
       ECRefDict,    -- :: (a -> Closure a) -> (a -> a -> Maybe a) -> ECRefDict a
       toClosure,    -- :: ECRefDict a -> a -> Closure a
       joinWith),    -- :: ECRefDict a -> a -> a -> Maybe a
 
     -- * local accesors (non-blocking)
-    creatorECRef,     -- :: ECRef a -> Node
-    scopeECRef,       -- :: ECRef a -> Par [Node]
-    readECRef,        -- :: ECRef a -> Par (Maybe a)
-    readECRef',       -- :: ECRef a -> Par a
+    creatorECRef, -- :: ECRef a -> Node
+    scopeECRef,   -- :: ECRef a -> Par [Node]
+    readECRef,    -- :: ECRef a -> Par (Maybe a)
+    readECRef',   -- :: ECRef a -> Par a
 
     -- * non-local write (non-blocking)
-    writeECRef,       -- :: ECRef a -> a -> Par (Maybe a)
-    writeECRef',      -- :: ECRef a -> a -> Par ()
+    writeECRef,   -- :: ECRef a -> a -> Par (Maybe a)
+    writeECRef',  -- :: ECRef a -> a -> Par ()
 
     -- * creation and destruction (blocking)
-    newECRef,         -- :: Closure (ECRefDict a)-> [Node] -> a -> Par (ECRef a)
-    freeECRef,        -- :: ECRef a -> Par ()
+    newECRef,     -- :: Closure (ECRefDict a)-> [Node] -> a -> Par (ECRef a)
+    freeECRef,    -- :: ECRef a -> Par ()
 
     -- * non-local read (blocking)
-    gatherECRef,      -- :: ECRef a -> Par (Maybe a)
-    gatherECRef',     -- :: ECRef a -> Par a
+    gatherECRef,  -- :: ECRef a -> Par (Maybe a)
+    gatherECRef', -- :: ECRef a -> Par a
+
+    -- * remote references
+    RRef,         -- * -> *; instances: Eq, Ord, Show, NFData, Serialize
+
+    -- * pure operations
+    homeRRef,     -- :: RRef a -> Node
+
+    -- * local, non-blocking operations (similar to ECRefs)
+    newRRef,      -- :: a -> Par (RRef a)
+    freeRRef,     -- :: RRef a -> Par ()
+    readRRef,     -- :: RRef a -> Par (Maybe a)
+    readRRef',    -- :: RRef a -> Par a
+    writeRRef,    -- :: RRef a -> a -> Par (Maybe a)
+    writeRRef',   -- :: RRef a -> a -> Par ()
+
+    -- * remote, non-blocking operations
+    rfreeRRef,    -- :: RRef a -> Par ()
+    rwriteRRef',  -- :: RRef (Closure a) -> Closure a -> Par ()
+
+    -- * remote, blocking operations
+    rwriteRRef,   -- :: RRef (Closure a) -> Closure a -> Par (Maybe (Closure a))
+    rreadRRef,    -- :: RRef (Closure a) -> Par (Maybe (Closure a))
+    rreadRRef',   -- :: RRef (Closure a) -> Par (Closure a)
 
     -- * this module's Static declaration
-    declareStatic     -- :: StaticDecl
+    declareStatic -- :: StaticDecl
   ) where
 
 import Prelude
 import Control.DeepSeq (NFData(rnf))
+import Control.Monad (unless, void)
 import Data.IORef (IORef, newIORef, readIORef, atomicModifyIORef')
 import Data.List (delete, foldl1')
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map (empty, insert, delete, lookup)
+import Data.Maybe (isJust)
 import Data.Serialize (Serialize)
 import qualified Data.Serialize (put, get)
 import System.IO.Unsafe (unsafePerformIO)
 import Unsafe.Coerce (unsafeCoerce)
 
 import Control.Parallel.HdpH
-       (Par, Node,
-        myNode, io,
+       (Par, Node, GIVar,
+        myNode, io, pushTo, new, glob, rput, get,
         Thunk(Thunk), Closure, mkClosure, unClosure, unitC,
         StaticDecl, static, declare)
 import qualified Control.Parallel.HdpH as HdpH (declareStatic)
@@ -293,7 +318,7 @@ readECRef' ref = do
 -- through knowledge of HdpH's message orders, but it's implemenation specific.)
 writeECRef :: ECRef a -> a -> Par (Maybe a)
 {-# INLINE writeECRef #-}
-writeECRef ref y = do
+writeECRef ref !y = do
   maybe_obj <- lookupECRef ref
   case maybe_obj of
     Nothing                  -> return Nothing
@@ -302,9 +327,10 @@ writeECRef ref y = do
       case maybe_new_x of
         Nothing    -> return Nothing  -- fast path; no update
         just_new_x -> do
-          let yC = toClosure dict y
-          let task = $(mkClosure [| writeECRef_abs (ref, yC) |])
-          rcall_ task peers
+          unless (null peers) $ do
+            let yC = toClosure dict y
+            let task = $(mkClosure [| writeECRef_abs (ref, yC) |])
+            rcall_ task peers
           return just_new_x
 
 writeECRef_abs :: (ECRef a, Closure a) -> Thunk (Par ())
@@ -327,7 +353,7 @@ updateCell dict y old_x =
 
 -- | Convenience variant of 'writeECRef', suppressing return value.
 writeECRef' :: ECRef a -> a -> Par ()
-writeECRef' ref y = do { _ <- writeECRef ref y; return () }
+writeECRef' ref = void . writeECRef ref
 
 
 -----------------------------------------------------------------------------
@@ -340,14 +366,23 @@ writeECRef' ref y = do { _ <- writeECRef ref y; return () }
 -- On return, the ECRef will have been set up on all nodes in 'scope'.
 -- May block (and risk descheduling the calling thread).
 newECRef :: Closure (ECRefDict a)-> [Node] -> a -> Par (ECRef a)
--- Closure a -> Closure (a -> a -> Maybe a) -> [Node] -> Par (ECRef a)
 newECRef dictC scope x = do
+  let !dict = unClosure dictC
+  -- sort out scope; ensure that 'me' is included
   me <- myNode
+  let peers = delete me scope
+  let scope' = me:peers
+  -- create reference
   ref <- io $ atomicModifyIORef' regRef (createRef me)
-  let scope' = me : delete me scope    -- NB: make sure 'me' is in scope
-  let xC = toClosure (unClosure dictC) x
-  let task = $(mkClosure [| newECRef_abs (ref, dictC, xC, scope') |])
-  _ <- rcall task scope'
+  -- set up reference cell locally
+  cell <- io $ newIORef x
+  io $ atomicModifyIORef' regRef (createEntry dict cell peers ref)
+  -- set up reference cell at peers (if there are any)
+  unless (null peers) $ do
+    let xC = toClosure dict x
+    let task = $(mkClosure [| newECRef_abs (ref, dictC, xC, scope') |])
+    void $ rcall task peers
+  -- return reference
   return ref
 
 newECRef_abs :: (ECRef a, Closure (ECRefDict a), Closure a, [Node])
@@ -403,11 +438,14 @@ gatherECRef ref = do
     Nothing                  -> return Nothing
     Just (dict, cell, peers) -> do
       x <- io $ readIORef cell
-      let xC = toClosure dict x
-      let task = $(mkClosure [| gatherECRef_abs (ref, xC) |])
-      ys <- fmap (map unClosure) $ rcall task peers
-      let !z = join dict (x:ys)
-      return (Just z)
+      if null peers
+        then return (Just x)
+        else do
+          let xC = toClosure dict x
+          let task = $(mkClosure [| gatherECRef_abs (ref, xC) |])
+          ys <- fmap (map unClosure) $ rcall task peers
+          let !z = join dict (x:ys)
+          return (Just z)
 
 gatherECRef_abs :: (ECRef a, Closure a) -> Thunk (Par (Closure a))
 gatherECRef_abs (ref, xC) = Thunk $ do
@@ -433,6 +471,151 @@ gatherECRef' ref = do
 
 
 -----------------------------------------------------------------------------
+-- Remote references
+
+-- Remote references (RRefs) are ordinary mutable variables that can be
+-- referred to globally. That is, an RRef is a serialisable handle to
+-- the underlying mutable variable.
+--
+-- RRefs share many properties with ECRefs; in fact, they are implemented
+-- as ECRefs. Notably: RRefs need to be freed explicitly, and reading from
+-- an RRef may return Nothing (in case the RRef has already been freed).
+-- However, there are also differences:
+-- * RRefs always live on a single node.
+-- * Ordinary RRef operations are only effective on the the RRef's home node.
+-- * RRefs may contain non-serialisable values.
+-- * RRefs can contain closures, in which case remote read and write
+--   operations are supported.
+
+-- | Remote referneces are just type synonyms for ECRefs.
+newtype RRef a = RRef { unRRef :: ECRef a }
+                 deriving (Eq, Ord, Show, NFData, Serialize)
+
+-- | Node where the remote reference lives.
+homeRRef :: RRef a -> Node
+homeRRef = creatorECRef . unRRef
+
+-- | Create a new remote reference.
+-- Note that this does not require a closured dictionary as values are never
+-- transmitted (and hence can be of any type), and the "join" is predetermined.
+-- There is also no scope, as the scope of a remote reference is just the
+-- creating node.
+newRRef :: a -> Par (RRef a)
+newRRef x = RRef <$> newECRef rrefDictC [] x
+
+-- Dictionary for remote refs; note that 'toClosure' will never be called,
+-- and that 'joinWith' will always overwrite the old value!
+rrefDict :: ECRefDict a
+rrefDict = ECRefDict { toClosure = error "Auc.ECRef.RRef: PANIC",
+                       joinWith  = \ _x y -> Just y }
+
+rrefDictC :: Closure (ECRefDict a)
+rrefDictC = $(mkClosure [| rrefDict |])
+
+-- | Like freeECRef (but only effective on the the home node).
+freeRRef :: RRef a -> Par ()
+freeRRef = freeECRef . unRRef
+
+-- | Like writeECRef; will return Nothing unless RRef exists on calling node.
+-- Returns the second argument when not returning Nothing.
+writeRRef :: RRef a -> a -> Par (Maybe a)
+writeRRef = writeECRef . unRRef
+
+-- | Like writeECRef' (but only effective on the the home node).
+-- Note that writes always succeed hence this write does not return anything.
+writeRRef' :: RRef a -> a -> Par ()
+writeRRef' = writeECRef' . unRRef
+
+-- | Like readECRef; will return Nothing anywhere but on the home node.
+readRRef :: RRef a -> Par (Maybe a)
+readRRef = readECRef . unRRef
+
+-- | Like readECRef'.
+readRRef' :: RRef a -> Par a
+readRRef' = readECRef' . unRRef
+
+
+-- | Remote deallocation of RRefs; non-blocking.
+rfreeRRef :: RRef a -> Par ()
+rfreeRRef !rref =
+  pushTo $(mkClosure [| rfreeRRef_abs rref |]) $ homeRRef rref
+
+rfreeRRef_abs :: RRef a -> Thunk (Par ())
+rfreeRRef_abs rref = Thunk $ freeRRef rref
+
+
+-- | Remote write for RRef; non-blocking.
+rwriteRRef' :: RRef (Closure a) -> Closure a -> Par ()
+rwriteRRef' !rref !clo =
+  pushTo $(mkClosure [| rwriteRRef'_abs (rref, clo) |]) $ homeRRef rref
+
+rwriteRRef'_abs :: (RRef (Closure a), Closure a) -> Thunk (Par ())
+rwriteRRef'_abs (rref, clo) = Thunk $ writeRRef' rref clo
+
+
+-- | Remote write for RRef; blocking.
+-- Blocks until after the remote write has happened.
+-- Returns the second argument if the write was successful, Nothing otherwise.
+-- Note that Nothing is returned only if the RRef has already been freed.
+rwriteRRef :: RRef (Closure a) -> Closure a -> Par (Maybe (Closure a))
+rwriteRRef !rref !clo = do
+  v <- new
+  gv <- glob v
+  pushTo $(mkClosure [| rwriteRRef_abs (rref, clo, gv) |]) $ homeRRef rref
+  ok <- unClosure <$> get v
+  if ok then return (Just clo) else return Nothing
+
+rwriteRRef_abs :: (RRef (Closure a), Closure a, GIVar (Closure Bool))
+               -> Thunk (Par ())
+rwriteRRef_abs (rref, clo, gv) = Thunk $
+  rput gv =<< toClosureBool . isJust <$> writeRRef rref clo
+
+
+-- | Remote read for RRef; blocking.
+rreadRRef :: RRef (Closure a) -> Par (Maybe (Closure a))
+rreadRRef !rref = do
+  v <- new
+  gv <- glob v
+  pushTo $(mkClosure [| rreadRRef_abs (rref, gv) |]) $ homeRRef rref
+  unClosure <$> get v
+
+rreadRRef_abs :: (RRef (Closure a), GIVar (Closure (Maybe (Closure a))))
+              -> Thunk (Par ())
+rreadRRef_abs (rref, gv) = Thunk $
+  rput gv =<< toClosureMaybeClosure <$> readRRef rref
+
+
+-- | Remote read for RRef; blocking.
+-- This version is analogue to readECRef' and will crash if the RRef is gone.
+rreadRRef' :: RRef (Closure a) -> Par (Closure a)
+rreadRRef' !rref = do
+  v <- new
+  gv <- glob v
+  pushTo $(mkClosure [| rreadRRef'_abs (rref, gv) |]) $ homeRRef rref
+  get v
+
+rreadRRef'_abs :: (RRef (Closure a), GIVar (Closure a)) -> Thunk (Par ())
+rreadRRef'_abs (rref, gv) = Thunk $
+  rput gv =<< readRRef' rref
+
+
+-- Closure conversion for Booleans.
+toClosureBool :: Bool -> Closure Bool
+toClosureBool !x = $(mkClosure [| toClosureBool_abs x |])
+
+toClosureBool_abs :: Bool -> Thunk Bool
+toClosureBool_abs x = Thunk x
+
+
+-- Closure conversion for options of closures.
+toClosureMaybeClosure :: Maybe (Closure a) -> Closure (Maybe (Closure a))
+toClosureMaybeClosure !x = $(mkClosure [| toClosureMaybeClosure_abs x |])
+
+toClosureMaybeClosure_abs :: Maybe (Closure a) -> Thunk (Maybe (Closure a))
+toClosureMaybeClosure_abs x = Thunk x
+
+
+-----------------------------------------------------------------------------
 -- Static declaration (must be at end of module)
 
 -- Empty splice; TH hack to make all environment abstractions visible.
@@ -446,4 +629,12 @@ declareStatic =
      declare $(static 'writeECRef_abs),
      declare $(static 'newECRef_abs),
      declare $(static 'freeECRef_abs),
-     declare $(static 'gatherECRef_abs)]
+     declare $(static 'gatherECRef_abs),
+     declare $(static 'rrefDict),
+     declare $(static 'rfreeRRef_abs),
+     declare $(static 'rwriteRRef'_abs),
+     declare $(static 'rwriteRRef_abs),
+     declare $(static 'rreadRRef_abs),
+     declare $(static 'rreadRRef'_abs),
+     declare $(static 'toClosureBool_abs),
+     declare $(static 'toClosureMaybeClosure_abs)]
