@@ -19,7 +19,6 @@
 
 module Main where
 
--- TSP stuff
 import Prelude hiding (init)
 import Control.DeepSeq (NFData(rnf), force)
 import Control.Monad (forM_)
@@ -48,7 +47,7 @@ import qualified Control.Parallel.HdpH as HdpH (declareStatic)
 import Aux.ECRef
        (ECRef, ECRefDict(..), newECRef, freeECRef, readECRef')
 import qualified Aux.ECRef as ECRef (declareStatic)
-import Aux.BranchAndBound (Path, BBDict(..), seqBB, parBB)
+import Aux.BranchAndBound (Path, BBDict(..), seqBB, parBB, seqBufBB, parBufBB)
 import qualified Aux.BranchAndBound as BranchAndBound (declareStatic)
 
 
@@ -373,19 +372,45 @@ bbDictC_abs (tspRef, infty, sortCandidates, task_depth) =
 
 
 -- sequential skeleton instantiation
-tspSeq :: ECRef TSP -> Bool -> Int -> Par ([Node], Distance, Int)
+tspSeq :: ECRef TSP -> Bool -> Int -> Par ([Node], Distance, Integer)
 tspSeq tspRef sortCands depth = do
   tsp <- readECRef' tspRef
   let !infty = maxlen tsp
   (Y tour len, !tasks) <- seqBB (bbDictC tspRef infty sortCands depth) ecDictYC
-  return (reverse tour, len, tasks)
+  return (reverse tour, len, fromIntegral tasks)
 
 -- parallel skeleton instantiation
-tspPar :: ECRef TSP -> Bool -> Int -> Par ([Node], Distance, Int)
+tspPar :: ECRef TSP -> Bool -> Int -> Par ([Node], Distance, Integer)
 tspPar tspRef sortCands depth = do
   tsp <- readECRef' tspRef
   let !infty = maxlen tsp
   (Y tour len, !tasks) <- parBB (bbDictC tspRef infty sortCands depth) ecDictYC
+  return (reverse tour, len, fromIntegral tasks)
+
+
+-- sequential skeleton instantiation, "delayed" task creation
+tspSeqBuf :: ECRef TSP -> Bool -> Int -> Int
+          -> Par ([Node], Distance, Integer)
+tspSeqBuf tspRef sortCands depth buf_sz = do
+  tsp <- readECRef' tspRef
+  let !infty = maxlen tsp
+  (Y tour len, !tasks) <-
+    seqBufBB buf_sz (bbDictC tspRef infty sortCands depth) ecDictYC
+  return (reverse tour, len, tasks)
+
+-- parallel skeleton instantiation, delayed task creation.
+-- NOTE: Risks deadlocking HdpH, at least with default HdpH RTS configuration.
+--   To avoid deadlock, make sure that '1 <= ntf_freq < buf_sz' and either
+--   * run at least two schedulers on the root node, or
+--   * run on at least two nodes, and make sure that 'buf_sz >= 2'.
+--   Consider spark pool watermarks; must have 'buf_sz >= minSched > maxFish'.
+tspParBuf :: ECRef TSP -> Bool -> Int -> Int -> Int
+          -> Par ([Node], Distance, Integer)
+tspParBuf tspRef sortCands depth buf_sz ntf_freq = do
+  tsp <- readECRef' tspRef
+  let !infty = maxlen tsp
+  (Y tour len, !tasks) <-
+    parBufBB buf_sz ntf_freq (bbDictC tspRef infty sortCands depth) ecDictYC
   return (reverse tour, len, tasks)
 
 
@@ -448,6 +473,18 @@ parseDepth s | isPrefixOf "-d" s = case reads $ drop 2 s of
                                      _              -> Nothing
              | otherwise         = Nothing
 
+parseBufSize :: String -> Maybe Int
+parseBufSize s | isPrefixOf "-n" s = case reads $ drop 2 s of
+                                       [(bufsize, "")]  -> Just bufsize
+                                       _                -> Nothing
+               | otherwise         = Nothing
+
+parseNotifyFreq :: String -> Maybe Int
+parseNotifyFreq s | isPrefixOf "-k" s = case reads $ drop 2 s of
+                                          [(nfreq, "")]  -> Just nfreq
+                                          _              -> Nothing
+                  | otherwise         = Nothing
+
 parseSortFlag :: String -> Maybe Bool
 parseSortFlag "-sort" = Just True
 parseSortFlag _       = Nothing
@@ -457,18 +494,22 @@ parseFilename ""      = Nothing
 parseFilename ('-':_) = Nothing
 parseFilename s       = Just s
 
-parseArgs :: [String] -> (Bool, Int, Int, String)
-parseArgs = foldl parse (False, 0, 0, "")
+parseArgs :: [String] -> (Bool, Int, Int, Int, Int, String)
+parseArgs = foldl parse (False, 0, 0, 1, 1, "")
   where
-    parse (sort, ver, depth, file) s =
+    parse (sort, ver, depth, bufsize, nfreq, file) s =
       maybe id upd1 (parseSortFlag s) $
       maybe id upd2 (parseVersion s) $
       maybe id upd3 (parseDepth s) $
-      maybe id upd4 (parseFilename s) $ (sort, ver, depth, file)
-    upd1 y ( _, x2, x3, x4) = (y, x2, x3, x4)
-    upd2 y (x1,  _, x3, x4) = (x1, y, x3, x4)
-    upd3 y (x1, x2,  _, x4) = (x1, x2, y, x4)
-    upd4 y (x1, x2, x3,  _) = (x1, x2, x3, y)
+      maybe id upd4 (parseBufSize s) $
+      maybe id upd5 (parseNotifyFreq s) $
+      maybe id upd6 (parseFilename s) $ (sort, ver, depth, bufsize, nfreq, file)
+    upd1 y ( _, x2, x3, x4, x5, x6) = ( y, x2, x3, x4, x5, x6)
+    upd2 y (x1,  _, x3, x4, x5, x6) = (x1,  y, x3, x4, x5, x6)
+    upd3 y (x1, x2,  _, x4, x5, x6) = (x1, x2,  y, x4, x5, x6)
+    upd4 y (x1, x2, x3,  _, x5, x6) = (x1, x2, x3,  y, x5, x6)
+    upd5 y (x1, x2, x3, x4,  _, x6) = (x1, x2, x3, x4,  y, x6)
+    upd6 y (x1, x2, x3, x4, x5,  _) = (x1, x2, x3, x4, x5,  y)
 
 
 -- parse HdpH runtime system config options; abort if there is an error
@@ -489,11 +530,11 @@ main = do
   opts_args <- getArgs
   (conf, args) <- parseOpts opts_args
   runParIO_ conf $ do
-    return ()
     -- parsing maxclique cmd line arguments (no real error checking)
-    let (sortCands, version, depth, filename) = parseArgs args
+    let (sortCands, version, depth, buf_sz, ntf_freq, filename) = parseArgs args
     io $ putStrLn $
       "TSP" ++ " -v" ++ show version ++ " -d" ++ show depth ++
+      " -n" ++ show buf_sz ++ " -k" ++ show ntf_freq ++
       (if sortCands then " -sort" else "") ++
       " " ++ filename
     -- reading TSP instance from file (or stdin)
@@ -504,8 +545,10 @@ main = do
     io $ putStrLn $ "t_distribute: " ++ show t_distribute
     -- dispatch on version
     ((tour, len, tasks), t_compute) <- timeM' $ case version of
-      0 -> force <$> tspSeq tspRef sortCands depth   -- sequential
-      1 -> force <$> tspPar tspRef sortCands depth   -- parallel
+      0 -> force <$> tspSeq tspRef sortCands depth                    -- seq
+      1 -> force <$> tspSeqBuf tspRef sortCands depth buf_sz          -- seq
+      2 -> force <$> tspPar tspRef sortCands depth                    -- par
+      3 -> force <$> tspParBuf tspRef sortCands depth buf_sz ntf_freq -- par
       _ -> usage
     return ()
     -- deallocating TSP instance
