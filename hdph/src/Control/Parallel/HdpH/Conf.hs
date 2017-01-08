@@ -20,7 +20,6 @@ module Control.Parallel.HdpH.Conf
 import Prelude
 import Control.Monad (foldM)
 import Data.Char (isDigit, isSpace)
-import Data.Functor ((<$>))
 import Data.List (intercalate, stripPrefix)
 import GHC.Conc (getNumCapabilities)
 import qualified Network.BSD (getHostName)
@@ -54,6 +53,12 @@ data RTSConf =
         -- @-N@). Default is 1.
         --
         -- TODO: Describe switch and possible (negative) values.
+
+    selSparkFIFO :: Bool,
+        -- ^ Select sparks always according to FIFO policy, regardless of
+        -- whether selection for local execution or remote scheduling.
+        -- Default is False, which means that local execution selects
+        -- youngest sparks; remote scheduling selects oldest.
 
     wakeupDly :: Int,
         -- ^ Interval in microseconds to wake up sleeping schedulers
@@ -154,6 +159,7 @@ defaultRTSConf =
   RTSConf {
     debugLvl       = dbgNone,  -- no debug information
     scheds         = 1,        -- only 1 scheduler by default
+    selSparkFIFO   = False,    -- don't observe strict FIFO scheduling
     wakeupDly      = 1000,     -- wake up one sleeping scheduler every millisecond
     maxHops        = 3,        -- no more than 3 hops per FISH
     maxFish        = 1,        -- send FISH when <= 1 spark in pool
@@ -251,6 +257,8 @@ parseConfEntry hostname pid caps conf =
   <++ (string "scheds" >> skipEqual >> parseInt >>= \ i -> eof >>
        let n = if i > 0 then i else max 1 (caps + i) in
        return conf { scheds = n })
+  <++ (string "selSparkFIFO" >> skipEqual >> parseBool >>= \ b -> eof >>
+       return conf { selSparkFIFO = b })
   <++ (string "wakeup" >> skipEqual >> parseNat >>= \ n -> eof >>
        return conf { wakeupDly = n })
   <++ (string "hops" >> skipEqual >> parseNat >>= \ n -> eof >>
@@ -326,8 +334,10 @@ parseBool = do
     v <- parseTrue +++ parseFalse
     skipSpaces
     return v
-  where parseTrue  = string "true"  +++ string "TRUE"  >> return True
-        parseFalse = string "false" +++ string "FALSE" >> return False
+  where parseTrue  = string "true"  +++ string "TRUE"  +++ string "True"  >>
+                     return True
+        parseFalse = string "false" +++ string "FALSE" +++ string "False" >>
+                     return False
 
 -- parse and return an absolute path, ie. a list of strings separated by
 -- forward slashes (and without spaces); consume trailing space

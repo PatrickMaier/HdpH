@@ -46,7 +46,6 @@ import Control.Monad (when, replicateM_, void)
 import Control.Monad.Reader (ReaderT, runReaderT, ask)
 import Control.Monad.Trans (lift)
 import qualified Data.ByteString.Lazy as BS
-import Data.Functor ((<$>))
 import Data.IORef (IORef, newIORef, readIORef, writeIORef, atomicModifyIORef)
 import Data.List (insertBy, sortBy)
 import Data.Ord (comparing)
@@ -61,6 +60,7 @@ import Control.Parallel.HdpH.Conf
                , minSched
                , minFishDly
                , maxFishDly
+               , selSparkFIFO
                , useLastStealOptimisation
                , useLowWatermarkOptimisation))
 
@@ -257,17 +257,23 @@ wakeupSched n = getIdleSchedsSem >>= liftIO . replicateM_ n . Sem.signal
 -----------------------------------------------------------------------------
 -- spark selection policies
 
--- Local spark selection policy (pick sparks from back of queue),
--- starting from radius 'r' and and rippling outwords;
+-- Local spark selection policy.
+-- Picks a spark from the pool (queue) at radius 'r' and rippling outwards;
+-- if 'useFIFOPolicy' is True picks from front of queue, otherwise from back;
 -- the scheduler ID may be used for logging.
-selectLocalSpark :: Int -> Dist -> SparkM m (Maybe (Spark m, Dist))
-selectLocalSpark schedID !r = do
-  pool <- getPool r
-  maybe_spark <- liftIO $ popBackIO pool
-  case maybe_spark of
-    Just spark          -> return $ Just (spark, r)          -- return spark
-    Nothing | r == one  -> return Nothing                    -- pools empty
-            | otherwise -> selectLocalSpark schedID (mul2 r) -- ripple out
+selectLocalSpark :: Int -> Bool -> Dist -> SparkM m (Maybe (Spark m, Dist))
+{-# INLINE selectLocalSpark #-}
+selectLocalSpark _schedID useFIFOPolicy =
+  selectFrom
+    where
+      pickSpark | useFIFOPolicy = liftIO . popFrontIO
+                | otherwise     = liftIO . popBackIO
+      selectFrom !r = do
+        maybe_spark <- pickSpark =<< getPool r
+        case maybe_spark of
+          Just spark          -> return $ Just (spark, r)  -- return spark
+          Nothing | r == one  -> return Nothing            -- all pools empty
+                  | otherwise -> selectFrom (mul2 r)       -- ripple out
 
 
 -- Remote spark selection policy (pick sparks from front of queue),
@@ -314,14 +320,17 @@ maySCHEDULE = do
 -----------------------------------------------------------------------------
 -- access to spark pool
 
--- Get a spark from the back of a spark pool with minimal radius, if any exists;
+-- Get a spark from a spark pool with minimal radius, if any exists;
 -- possibly send a FISH message and update stats (ie. count sparks converted);
+-- the RTS flag selSparkFIFO governs whether a spark is picked from the front
+-- of a non-empty pool (if selSparkFIFO is True) or from the back;
 -- the scheduler ID argument may be used for logging.
 getLocalSpark :: Int -> SparkM m (Maybe (Spark m))
 getLocalSpark schedID = do
   -- select local spark, starting with smallest radius
+  useFIFOPolicy <- selSparkFIFO <$> s_conf <$> ask
   r_min <- liftIO getMinDistIO
-  maybe_spark <- selectLocalSpark schedID r_min
+  maybe_spark <- selectLocalSpark schedID useFIFOPolicy r_min
   case maybe_spark of
     Nothing         -> do
       sendFISH zero

@@ -39,7 +39,7 @@ import System.Exit (exitFailure, exitSuccess)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 
 import Control.Parallel.HdpH
-       (RTSConf, defaultRTSConf, updateConf,
+       (RTSConf(selSparkFIFO), defaultRTSConf, updateConf,
         Par, runParIO_, allNodes, io,
         Thunk(Thunk), Closure, mkClosure,
         StaticDecl, static, declare, register)
@@ -528,9 +528,10 @@ main = do
   -- HdpH magic (register static decls, parse cmd line opts and get going)
   register declareStatic
   opts_args <- getArgs
-  (conf, args) <- parseOpts opts_args
+  (conf0, args) <- parseOpts opts_args
+  let conf = conf0 { selSparkFIFO = True }  -- strict FIFO spark selection
   runParIO_ conf $ do
-    -- parsing maxclique cmd line arguments (no real error checking)
+    -- parsing TSP cmd line arguments (no real error checking)
     let (sortCands, version, depth, buf_sz, ntf_freq, filename) = parseArgs args
     io $ putStrLn $
       "TSP" ++ " -v" ++ show version ++ " -d" ++ show depth ++
