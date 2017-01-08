@@ -110,7 +110,7 @@ data BBDict x y =
 -- Takes a closured BnB dictionary and a closured ECRef dictionary.
 -- Runs a sequential BnB search and returns the maximal solution and
 -- the number of tasks generated.
-seqBB :: Closure (BBDict x y) -> Closure (ECRefDict y) -> Par (y, Int)
+seqBB :: Closure (BBDict x y) -> Closure (ECRefDict y) -> Par (y, Integer)
 seqBB = bb SEQ
 
 
@@ -118,7 +118,7 @@ seqBB = bb SEQ
 -- Takes a closured BnB dictionary and a closured ECRef dictionary.
 -- Runs a parallel BnB search and returns the maximal solution and
 -- the number of tasks generated.
-parBB :: Closure (BBDict x y) -> Closure (ECRefDict y) -> Par (y, Int)
+parBB :: Closure (BBDict x y) -> Closure (ECRefDict y) -> Par (y, Integer)
 parBB = bb PAR
 
 
@@ -126,7 +126,7 @@ parBB = bb PAR
 -- Takes a mode, a closured BnB dictionary, and a closured ECRef dictionary.
 -- Runs a BnB search (as per mode) and returns the maximal solution and
 -- the number of tasks generated.
-bb :: MODE -> Closure (BBDict x y) -> Closure (ECRefDict y) -> Par (y, Int)
+bb :: MODE -> Closure (BBDict x y) -> Closure (ECRefDict y) -> Par (y, Integer)
 {-# INLINE bb #-}
 bb mode bbDictC ecDictYC = do
   let !bbDict = unClosure bbDictC
@@ -148,7 +148,7 @@ bb mode bbDictC ecDictYC = do
 -- Takes a mode, a closured BnB dictionary, a starting path, and an ECRef
 -- for propagating the solution.
 -- Returns (when all tasks are completed) the number of tasks generated.
-bbSearch :: MODE -> Closure (BBDict x y) -> Path x -> ECRef y -> Par Int
+bbSearch :: MODE -> Closure (BBDict x y) -> Path x -> ECRef y -> Par Integer
 {-# INLINE bbSearch #-}
 bbSearch mode bbDictC path0 yRef = do
   let !bbDict = unClosure bbDictC

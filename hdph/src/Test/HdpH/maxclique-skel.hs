@@ -432,14 +432,14 @@ bbDictC_abs (bigGRef, task_depth) = Thunk $ bbDict bigGRef task_depth
 
 
 -- sequential skeleton instantiation
-maxClqSeq :: ECRef Graph -> Int -> Par ([Vertex], Int)
+maxClqSeq :: ECRef Graph -> Int -> Par ([Vertex], Integer)
 maxClqSeq bigGRef task_depth = do
   (Y clique _, !tasks) <- seqBB (bbDictC bigGRef task_depth) ecDictYC
   return (clique, tasks)
 
 
 -- parallel skeleton instantiation
-maxClqPar :: ECRef Graph -> Int -> Par ([Vertex], Int)
+maxClqPar :: ECRef Graph -> Int -> Par ([Vertex], Integer)
 maxClqPar bigGRef task_depth = do
   (Y clique _, !tasks) <- parBB (bbDictC bigGRef task_depth) ecDictYC
   return (clique, tasks)
@@ -464,14 +464,14 @@ bbDictOptC_abs (bigGRef, task_depth) = Thunk $ bbDictOpt bigGRef task_depth
 
 
 -- optimised sequential skeleton instantiation
-maxClqSeqOpt :: ECRef Graph -> Int -> Par ([Vertex], Int)
+maxClqSeqOpt :: ECRef Graph -> Int -> Par ([Vertex], Integer)
 maxClqSeqOpt bigGRef task_depth = do
   (Y clique _, !tasks) <- seqBB (bbDictOptC bigGRef task_depth) ecDictYC
   return (clique, tasks)
 
 
 -- optimised parallel skeleton instantiation
-maxClqParOpt :: ECRef Graph -> Int -> Par ([Vertex], Int)
+maxClqParOpt :: ECRef Graph -> Int -> Par ([Vertex], Integer)
 maxClqParOpt bigGRef task_depth = do
   (Y clique _, !tasks) <- parBB (bbDictOptC bigGRef task_depth) ecDictYC
   return (clique, tasks)

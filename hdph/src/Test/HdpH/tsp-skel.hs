@@ -377,7 +377,7 @@ tspSeq tspRef sortCands depth = do
   tsp <- readECRef' tspRef
   let !infty = maxlen tsp
   (Y tour len, !tasks) <- seqBB (bbDictC tspRef infty sortCands depth) ecDictYC
-  return (reverse tour, len, fromIntegral tasks)
+  return (reverse tour, len, tasks)
 
 -- parallel skeleton instantiation
 tspPar :: ECRef TSP -> Bool -> Int -> Par ([Node], Distance, Integer)
@@ -385,7 +385,7 @@ tspPar tspRef sortCands depth = do
   tsp <- readECRef' tspRef
   let !infty = maxlen tsp
   (Y tour len, !tasks) <- parBB (bbDictC tspRef infty sortCands depth) ecDictYC
-  return (reverse tour, len, fromIntegral tasks)
+  return (reverse tour, len, tasks)
 
 
 -- sequential skeleton instantiation, "delayed" task creation
