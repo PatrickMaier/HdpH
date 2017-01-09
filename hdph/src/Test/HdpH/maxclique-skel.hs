@@ -536,6 +536,46 @@ search bigG yRef y bigPee =
 
 
 -----------------------------------------------------------------------------
+-- HdpH maxclique search using skeleton (optimised, path-specific task constr)
+
+-- BnB dictionary for path-specific and optimised task generation
+bbDictPathOpt :: ECRef Graph -> Int -> Int -> BBDict X Y
+bbDictPathOpt bigGRef task_depth cand_size =
+  (bbDictOpt bigGRef task_depth) {
+    bbIsTask =
+      \ path ->
+        length path == task_depth ||
+        not (null path) && VertexSet.size (getCandidates path) <= cand_size
+  }
+
+bbDictPathOptC :: ECRef Graph -> Int -> Int -> Closure (BBDict X Y)
+bbDictPathOptC bigGRef task_depth cand_size =
+  $(mkClosure [| bbDictPathOptC_abs (bigGRef, task_depth, cand_size) |])
+
+bbDictPathOptC_abs :: (ECRef Graph, Int, Int) -> Thunk (BBDict X Y)
+bbDictPathOptC_abs (bigGRef, task_depth, cand_size) =
+  Thunk $ bbDictPathOpt bigGRef task_depth cand_size
+
+
+-- optimised sequential skeleton instantiation; generates tasks when path
+-- is 'task_depth' long or there are no more than 'cand_size' candidates.
+maxClqSeqPathOpt :: ECRef Graph -> Int -> Int -> Par ([Vertex], Integer)
+maxClqSeqPathOpt bigGRef task_depth cand_size = do
+  (Y clique _, !tasks) <-
+    seqBB (bbDictPathOptC bigGRef task_depth cand_size) ecDictYC
+  return (clique, tasks)
+
+
+-- optimised sequential skeleton instantiation; generates tasks when path
+-- is 'task_depth' long or there are no more than 'cand_size' candidates.
+maxClqParPathOpt :: ECRef Graph -> Int -> Int -> Par ([Vertex], Integer)
+maxClqParPathOpt bigGRef task_depth cand_size = do
+  (Y clique _, !tasks) <-
+    parBB (bbDictPathOptC bigGRef task_depth cand_size) ecDictYC
+  return (clique, tasks)
+
+
+-----------------------------------------------------------------------------
 -- Static declaration (just before 'main')
 
 -- Empty splice; TH hack to make all environment abstractions visible.
@@ -552,7 +592,8 @@ declareStatic = mconcat [HdpH.declareStatic,
                          declare $(static 'ecDictY),
                          declare $(static 'bbDictC_abs),
                          declare $(static 'bbDictOptC_abs),
-                         declare $(static 'optMkTask_abs)]
+                         declare $(static 'optMkTask_abs),
+                         declare $(static 'bbDictPathOptC_abs)]
 
 
 ---------------------------------------------------------------------------
@@ -582,7 +623,8 @@ usage = do
   liftIO $ putStrLn "Usage: maxclique [OPTIONS] FILE"
   liftIO $ putStrLn "  -perm, -noperm: Permute vertices into desc degree order"
   liftIO $ putStrLn "  -vN: Nth version of the algoritm (default N=0)"
-  liftIO $ putStrLn "  -dN: depth bound (for bounded iterator; default N=0)"
+  liftIO $ putStrLn "  -dN: depth bound for outer iterator (default N=0)"
+  liftIO $ putStrLn "  -cN: minimal #candidates for outer iter (default N=-1)"
   liftIO $ exitFailure
 
 parseVersion :: String -> Maybe Int
@@ -597,6 +639,12 @@ parseDepth s | isPrefixOf "-d" s = case reads $ drop 2 s of
                                      _              -> Nothing
              | otherwise         = Nothing
 
+parseMinCandidates :: String -> Maybe Int
+parseMinCandidates s | isPrefixOf "-c" s = case reads $ drop 2 s of
+                                             [(cands, "")]  -> Just cands
+                                             _              -> Nothing
+                     | otherwise         = Nothing
+
 parsePermutation :: String -> Maybe Bool
 parsePermutation "-perm"   = Just True
 parsePermutation "-noperm" = Just False
@@ -607,18 +655,20 @@ parseFilename ""      = Nothing
 parseFilename ('-':_) = Nothing
 parseFilename s       = Just s
 
-parseArgs :: [String] -> (Bool, Int, Int, String)
-parseArgs = foldl parse (True, 0, 0, "")
+parseArgs :: [String] -> (Bool, Int, Int, Int, String)
+parseArgs = foldl parse (True, 0, 0, -1, "")
   where
-    parse (perm, ver, depth, file) s =
+    parse (perm, ver, depth, cands, file) s =
       maybe id upd1 (parsePermutation s) $
       maybe id upd2 (parseVersion s) $
       maybe id upd3 (parseDepth s) $
-      maybe id upd4 (parseFilename s) $ (perm, ver, depth, file)
-    upd1 y ( _, x2, x3, x4) = (y, x2, x3, x4)
-    upd2 y (x1,  _, x3, x4) = (x1, y, x3, x4)
-    upd3 y (x1, x2,  _, x4) = (x1, x2, y, x4)
-    upd4 y (x1, x2, x3,  _) = (x1, x2, x3, y)
+      maybe id upd4 (parseMinCandidates s) $
+      maybe id upd5 (parseFilename s) $ (perm, ver, depth, cands, file)
+    upd1 y ( _, x2, x3, x4, x5) = ( y, x2, x3, x4, x5)
+    upd2 y (x1,  _, x3, x4, x5) = (x1,  y, x3, x4, x5)
+    upd3 y (x1, x2,  _, x4, x5) = (x1, x2,  y, x4, x5)
+    upd4 y (x1, x2, x3,  _, x5) = (x1, x2, x3,  y, x5)
+    upd5 y (x1, x2, x3, x4,  _) = (x1, x2, x3, x4,  y)
 
 
 -- parse HdpH runtime system config options; abort if there is an error
@@ -640,10 +690,10 @@ main = do
   (conf, args) <- parseOpts opts_args
   runParIO_ conf $ do
     -- parsing maxclique cmd line arguments (no real error checking)
-    let (permute, version, depth, filename) = parseArgs args
+    let (permute, version, depth, cands, filename) = parseArgs args
     io $ putStrLn $
-      "MaxClique" ++ " -v" ++ show version ++
-      (if depth >= 0 then " -d" ++ show depth else "") ++
+      "MaxClique" ++ " -v" ++ show version ++ " -d" ++ show depth ++
+      (if cands >= 0 then " -c" ++ show cands else "") ++
       (if permute then " -perm" else " -noperm") ++
       " " ++ filename
     -- reading input graph
@@ -687,10 +737,12 @@ main = do
     io $ putStrLn $ "t_distribute: " ++ show t_distribute
     -- dispatch on version
     ((bigCstar, info), t_compute) <- timeM' $ case version of
-      0 -> force <$> maxClqSeq bigGRef depth     -- sequential; unoptimised
-      1 -> force <$> maxClqSeqOpt bigGRef depth  -- sequential; optimised
-      2 -> force <$> maxClqPar bigGRef depth     -- parallel; unoptimised
-      3 -> force <$> maxClqParOpt bigGRef depth  -- parallel; optimised
+      00 -> force <$> maxClqSeq bigGRef depth     -- sequential skeletons
+      01 -> force <$> maxClqSeqOpt bigGRef depth
+      02 -> force <$> maxClqSeqPathOpt bigGRef depth cands
+      10 -> force <$> maxClqPar bigGRef depth     -- parallel skeletons
+      11 -> force <$> maxClqParOpt bigGRef depth
+      12 -> force <$> maxClqParPathOpt bigGRef depth cands
       _ -> usage
     -- deallocating input graph
     ((), t_deallocate) <- timeM' $ do
