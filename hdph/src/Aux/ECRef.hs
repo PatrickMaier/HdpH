@@ -1,4 +1,4 @@
--- Eventually Coherent References
+-- Eventually Coherent References, and their by-products
 --
 -- Author: Patrick Maier
 --
@@ -80,7 +80,7 @@ import Unsafe.Coerce (unsafeCoerce)
 
 import Control.Parallel.HdpH
        (Par, Node, GIVar,
-        myNode, io, pushTo, new, glob, rput, get,
+        myNode, allNodes, io, pushTo, new, glob, rput, get,
         Thunk(Thunk), Closure, mkClosure, unClosure, unitC,
         StaticDecl, static, declare)
 import qualified Control.Parallel.HdpH as HdpH (declareStatic)
@@ -362,15 +362,15 @@ writeECRef' ref = void . writeECRef ref
 -- | Returns a new ECRef with initial value determined by Closure 'initC',
 -- join operation determined by Closure 'joinWithC' and given spatial 'scope';
 -- the scope of the resulting ECRef will include the current node (even if
--- missing from 'scope').
+-- missing from 'scope'); 'scope == []' will be interpreted as universal scope.
 -- On return, the ECRef will have been set up on all nodes in 'scope'.
 -- May block (and risk descheduling the calling thread).
 newECRef :: Closure (ECRefDict a)-> [Node] -> a -> Par (ECRef a)
 newECRef dictC scope x = do
   let !dict = unClosure dictC
-  -- sort out scope; ensure that 'me' is included
+  -- sort out scope; ensure 'me' is included and 'scope == []' means all nodes
   me <- myNode
-  let peers = delete me scope
+  peers <- delete me <$> if null scope then allNodes else return scope
   let scope' = me:peers
   -- create reference
   ref <- io $ atomicModifyIORef' regRef (createRef me)
@@ -501,7 +501,7 @@ homeRRef = creatorECRef . unRRef
 -- There is also no scope, as the scope of a remote reference is just the
 -- creating node.
 newRRef :: a -> Par (RRef a)
-newRRef x = RRef <$> newECRef rrefDictC [] x
+newRRef x = RRef <$> do { me <- myNode; newECRef rrefDictC [me] x }
 
 -- Dictionary for remote refs; note that 'toClosure' will never be called,
 -- and that 'joinWith' will always overwrite the old value!
