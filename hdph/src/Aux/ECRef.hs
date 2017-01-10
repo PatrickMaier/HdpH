@@ -30,13 +30,32 @@ module Aux.ECRef
     writeECRef,   -- :: ECRef a -> a -> Par (Maybe a)
     writeECRef',  -- :: ECRef a -> a -> Par ()
 
-    -- * creation and destruction (blocking)
-    newECRef,     -- :: Closure (ECRefDict a)-> [Node] -> a -> Par (ECRef a)
+    -- * non-local destruction (non-blocking)
     freeECRef,    -- :: ECRef a -> Par ()
+
+    -- * creation (blocking)
+    newECRef,     -- :: Closure (ECRefDict a)-> [Node] -> a -> Par (ECRef a)
 
     -- * non-local read (blocking)
     gatherECRef,  -- :: ECRef a -> Par (Maybe a)
     gatherECRef', -- :: ECRef a -> Par a
+
+
+    -- * immutable references
+    IMRef,        -- * -> *; instances: Eq, Ord, Show, NFData, Serialize
+
+    -- * local accesors (non-blocking, similar to ECRefs)
+    creatorIMRef, -- :: IMRef a -> Node
+    scopeIMRef,   -- :: IMRef a -> Par [Node]
+    readIMRef,    -- :: IMRef a -> Par (Maybe a)
+    readIMRef',   -- :: IMRef a -> Par a
+
+    -- * destruction (non-blocking, similar to ECRefs)
+    freeIMRef,    -- :: IMRef a -> Par ()
+
+    -- * creation (blocking, similar to ECRefs)
+    newIMRef,     -- :: (a -> Closure a) -> [Node] -> a -> Par (IMRef a)
+
 
     -- * remote references
     RRef,         -- * -> *; instances: Eq, Ord, Show, NFData, Serialize
@@ -356,17 +375,38 @@ writeECRef' :: ECRef a -> a -> Par ()
 writeECRef' ref = void . writeECRef ref
 
 
+-- | Frees the given ECRef on all nodes in its scope.
+-- After this call, a call to 'readECRef' may return 'Nothing'.
+freeECRef :: ECRef a -> Par ()
+freeECRef ref = do
+  scope <- scopeECRef ref
+  let task = $(mkClosure [| freeECRef_abs ref |])
+  rcall_ task scope
+  return ()
+
+freeECRef_abs :: ECRef a -> Thunk (Par ())
+freeECRef_abs ref = Thunk $
+  io $ atomicModifyIORef' regRef (deleteEntry ref)
+
+
 -----------------------------------------------------------------------------
 -- Non-local ECRef operations (potentially blocking)
 
--- | Returns a new ECRef with initial value determined by Closure 'initC',
--- join operation determined by Closure 'joinWithC' and given spatial 'scope';
+-- | Returns a new ECRef with initial value 'x'; join operation and
+-- closure conversion are determined by the closure dictionary 'dictC';
 -- the scope of the resulting ECRef will include the current node (even if
--- missing from 'scope'); 'scope == []' will be interpreted as universal scope.
+-- missing from 'scope'); 'scope == []' is interpreted as universal scope.
 -- On return, the ECRef will have been set up on all nodes in 'scope'.
 -- May block (and risk descheduling the calling thread).
 newECRef :: Closure (ECRefDict a)-> [Node] -> a -> Par (ECRef a)
-newECRef dictC scope x = do
+newECRef dictC scope x =
+  mkNewECRef dictC scope x (toClosure (unClosure dictC) x)
+
+-- Worker function called by newECRef, newIMRef and newRRef.
+-- NOTE: Deliberately non-strict in argument 'xC' when there are no peers;
+--       newRRef relies on this behaviour!
+mkNewECRef :: Closure (ECRefDict a)-> [Node] -> a -> Closure a -> Par (ECRef a)
+mkNewECRef dictC scope x xC = do
   let !dict = unClosure dictC
   -- sort out scope; ensure 'me' is included and 'scope == []' means all nodes
   me <- myNode
@@ -379,15 +419,14 @@ newECRef dictC scope x = do
   io $ atomicModifyIORef' regRef (createEntry dict cell peers ref)
   -- set up reference cell at peers (if there are any)
   unless (null peers) $ do
-    let xC = toClosure dict x
-    let task = $(mkClosure [| newECRef_abs (ref, dictC, xC, scope') |])
+    let task = $(mkClosure [| mkNewECRef_abs (ref, dictC, xC, scope') |])
     void $ rcall task peers
   -- return reference
   return ref
 
-newECRef_abs :: (ECRef a, Closure (ECRefDict a), Closure a, [Node])
-             -> Thunk (Par (Closure ()))
-newECRef_abs (ref, dictC, xC, scope') = Thunk $ do
+mkNewECRef_abs :: (ECRef a, Closure (ECRefDict a), Closure a, [Node])
+               -> Thunk (Par (Closure ()))
+mkNewECRef_abs (ref, dictC, xC, scope') = Thunk $ do
   me <- myNode
   let peers = delete me scope'
   cell <- io $ newIORef $ unClosure xC
@@ -404,23 +443,6 @@ createEntry :: ECRefDict a -> IORef a -> [Node] -> ECRef a -> ECRefReg
             -> (ECRefReg, ())
 createEntry !dict cell peers (ECRef label) reg =
   (reg { table = Map.insert label (ECRefObj dict cell peers) (table reg) }, ())
-
-
--- | Frees the given ECRef on all nodes in its scope.
--- On return, the given ECRef will have been freed on all nodes in scope,
--- from which point on readECRef will return 'Nothing'.
--- May block (and risk descheduling the calling thread).
-freeECRef :: ECRef a -> Par ()
-freeECRef ref = do
-  scope <- scopeECRef ref
-  let task = $(mkClosure [| freeECRef_abs ref |])
-  _ <- rcall task scope
-  return ()
-
-freeECRef_abs :: ECRef a -> Thunk (Par (Closure ()))
-freeECRef_abs ref = Thunk $ do
-  io $ atomicModifyIORef' regRef (deleteEntry ref)
-  return unitC
 
 
 -- | Reads from all nodes in the given ECRef's scope and returns the join
@@ -471,6 +493,66 @@ gatherECRef' ref = do
 
 
 -----------------------------------------------------------------------------
+-- Immutable references
+
+-- Immutable references (IMRefs) are immutable values that can be created
+-- across a spatial scope spanning multiple nodes and referred to globally.
+--
+-- IMRefs share many properties with ECRefs; in fact, they are implemented
+-- as ECRefs. Notably: IMRefs need to be freed explicitly, and reading from
+-- an IMRef may return Nothing (in case the IMRef has already been freed,
+-- or the reading node does not belong to its scope).
+-- However, there are also differences:
+-- * IMRefs are immutable, so they do not support any write operations.
+-- * There is no gather operation; it isn't necessary as IMRefs never change.
+
+-- | Immutable references are just type synonyms for ECRefs.
+newtype IMRef a = IMRef { unIMRef :: ECRef a }
+                  deriving (Eq, Ord, Show, NFData, Serialize)
+
+-- | Like creatorECRef.
+creatorIMRef :: IMRef a -> Node
+creatorIMRef = creatorECRef . unIMRef
+
+-- | Creates a new IMRef with value 'x' on nodes in 'scope'; the scope of
+-- the IMRef will include the current node (even if missing from 'scope');
+-- 'scope == []' is interpreted as universal scope.
+-- The 'toClo' function is used only once to convert 'x' into a closure
+-- that can be shipped to other nodes; since the IMRef is immutable,
+-- there is no need for a closure conversion in the dictionary.
+-- On return, the IMRef will have been set up on all nodes in 'scope'.
+-- May block (and risk descheduling the calling thread).
+newIMRef :: (a -> Closure a) -> [Node] -> a -> Par (IMRef a)
+newIMRef toClo scope x =
+  IMRef <$> mkNewECRef imrefDictC scope x (toClo x)
+
+-- Dictionary for immutable refs; note that 'toClosure' will never be called,
+-- and that 'joinWith' will never overwrite anything!
+imrefDict :: ECRefDict a
+imrefDict = ECRefDict { toClosure = error "Aux.ECRef.IMRef: PANIC",
+                        joinWith  = \ _x _y -> Nothing }
+
+imrefDictC :: Closure (ECRefDict a)
+imrefDictC = $(mkClosure [| imrefDict |])
+
+-- | Like scopeECRef.
+scopeIMRef :: IMRef a -> Par [Node]
+scopeIMRef = scopeECRef . unIMRef
+
+-- | Like readECRef.
+readIMRef :: IMRef a -> Par (Maybe a)
+readIMRef = readECRef . unIMRef
+
+-- | Like readECRef'.
+readIMRef' :: IMRef a -> Par a
+readIMRef' = readECRef' . unIMRef
+
+-- | Like freeECRef.
+freeIMRef :: IMRef a -> Par ()
+freeIMRef = freeECRef . unIMRef
+
+
+-----------------------------------------------------------------------------
 -- Remote references
 
 -- Remote references (RRefs) are ordinary mutable variables that can be
@@ -487,7 +569,7 @@ gatherECRef' ref = do
 -- * RRefs can contain closures, in which case remote read and write
 --   operations are supported.
 
--- | Remote referneces are just type synonyms for ECRefs.
+-- | Remote references are just type synonyms for ECRefs.
 newtype RRef a = RRef { unRRef :: ECRef a }
                  deriving (Eq, Ord, Show, NFData, Serialize)
 
@@ -501,12 +583,15 @@ homeRRef = creatorECRef . unRRef
 -- There is also no scope, as the scope of a remote reference is just the
 -- creating node.
 newRRef :: a -> Par (RRef a)
-newRRef x = RRef <$> do { me <- myNode; newECRef rrefDictC [me] x }
+newRRef x = do
+  me <- myNode
+  RRef <$> mkNewECRef rrefDictC [me] x (error "Aux.ECRef.newRRef: PANIC")
+  -- Note about the "error": This argument is never meant to be evaluated.
 
 -- Dictionary for remote refs; note that 'toClosure' will never be called,
 -- and that 'joinWith' will always overwrite the old value!
 rrefDict :: ECRefDict a
-rrefDict = ECRefDict { toClosure = error "Auc.ECRef.RRef: PANIC",
+rrefDict = ECRefDict { toClosure = error "Aux.ECRef.RRef: PANIC",
                        joinWith  = \ _x y -> Just y }
 
 rrefDictC :: Closure (ECRefDict a)
@@ -627,9 +712,10 @@ declareStatic =
     [HdpH.declareStatic,        -- 'Static' decl of imported modules
      Strategies.declareStatic,
      declare $(static 'writeECRef_abs),
-     declare $(static 'newECRef_abs),
+     declare $(static 'mkNewECRef_abs),
      declare $(static 'freeECRef_abs),
      declare $(static 'gatherECRef_abs),
+     declare $(static 'imrefDict),
      declare $(static 'rrefDict),
      declare $(static 'rfreeRRef_abs),
      declare $(static 'rwriteRRef'_abs),
