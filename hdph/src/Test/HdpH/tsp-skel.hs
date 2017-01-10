@@ -40,12 +40,12 @@ import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 
 import Control.Parallel.HdpH
        (RTSConf(selSparkFIFO), defaultRTSConf, updateConf,
-        Par, runParIO_, allNodes, io,
+        Par, runParIO_, io,
         Thunk(Thunk), Closure, mkClosure,
         StaticDecl, static, declare, register)
 import qualified Control.Parallel.HdpH as HdpH (declareStatic)
 import Aux.ECRef
-       (ECRef, ECRefDict(..), newECRef, freeECRef, readECRef')
+       (ECRefDict(..), readECRef', IMRef, newIMRef, freeIMRef, readIMRef')
 import qualified Aux.ECRef as ECRef (declareStatic)
 import Aux.BranchAndBound (Path, BBDict(..), seqBB, parBB, seqBufBB, parBufBB)
 import qualified Aux.BranchAndBound as BranchAndBound (declareStatic)
@@ -251,22 +251,6 @@ lb tsp (X (x0,x:_,len) cands) = len - dist tsp x x0 + w
 
 
 ---------------------------------------------------------------------------
--- global immutable reference for TSP instance (replicated everywhere)
-
-newECRefTSP :: TSP -> Par (ECRef TSP)
-newECRefTSP tsp = do
-  nodes <- allNodes
-  newECRef ecDictTSPC nodes tsp
-
-ecDictTSP :: ECRefDict TSP
-ecDictTSP = ECRefDict { toClosure = toClosureTSP,
-                        joinWith  = \ _x _y -> Nothing }
-
-ecDictTSPC :: Closure (ECRefDict TSP)
-ecDictTSPC = $(mkClosure [| ecDictTSP |])
-
-
----------------------------------------------------------------------------
 -- paths for TSP tree iterator
 
 toClosurePath :: Path X -> Closure (Path X)
@@ -338,13 +322,13 @@ ecDictYC = $(mkClosure [| ecDictY |])
 -- BnB dictionary for depth-bounded task generation;
 -- infty is a distance greater than any possible tour length;
 -- sortCandidates indicates whether to sort candidate nodes
-bbDict :: ECRef TSP -> Distance -> Bool -> Int -> BBDict X Y
+bbDict :: IMRef TSP -> Distance -> Bool -> Int -> BBDict X Y
 bbDict tspRef infty sortCandidates task_depth =
   BBDict {
     bbToClosure = toClosurePath,
     bbGenerator =
       \ path -> do
-        tsp <- readECRef' tspRef
+        tsp <- readIMRef' tspRef
         if null path
           then return [init tsp]
           else return $ split sortCandidates tsp (getX path),
@@ -354,7 +338,7 @@ bbDict tspRef infty sortCandidates task_depth =
                   else Y [] infty,
     bbDoPrune =
       \ path yRef -> do
-        tsp <- readECRef' tspRef
+        tsp <- readIMRef' tspRef
         Y _ shortest <- readECRef' yRef
         return $! not (null path) && lb tsp (getX path) >= shortest,
     bbIsTask =
@@ -362,37 +346,37 @@ bbDict tspRef infty sortCandidates task_depth =
     bbMkTask = Nothing
   }
 
-bbDictC :: ECRef TSP -> Distance -> Bool -> Int -> Closure (BBDict X Y)
+bbDictC :: IMRef TSP -> Distance -> Bool -> Int -> Closure (BBDict X Y)
 bbDictC tspRef infty sortCandidates task_depth =
   $(mkClosure [| bbDictC_abs (tspRef, infty, sortCandidates, task_depth) |])
 
-bbDictC_abs :: (ECRef TSP, Distance, Bool, Int) -> Thunk (BBDict X Y)
+bbDictC_abs :: (IMRef TSP, Distance, Bool, Int) -> Thunk (BBDict X Y)
 bbDictC_abs (tspRef, infty, sortCandidates, task_depth) =
   Thunk $ bbDict tspRef infty sortCandidates task_depth
 
 
 -- sequential skeleton instantiation
-tspSeq :: ECRef TSP -> Bool -> Int -> Par ([Node], Distance, Integer)
+tspSeq :: IMRef TSP -> Bool -> Int -> Par ([Node], Distance, Integer)
 tspSeq tspRef sortCands depth = do
-  tsp <- readECRef' tspRef
+  tsp <- readIMRef' tspRef
   let !infty = maxlen tsp
   (Y tour len, !tasks) <- seqBB (bbDictC tspRef infty sortCands depth) ecDictYC
   return (reverse tour, len, tasks)
 
 -- parallel skeleton instantiation
-tspPar :: ECRef TSP -> Bool -> Int -> Par ([Node], Distance, Integer)
+tspPar :: IMRef TSP -> Bool -> Int -> Par ([Node], Distance, Integer)
 tspPar tspRef sortCands depth = do
-  tsp <- readECRef' tspRef
+  tsp <- readIMRef' tspRef
   let !infty = maxlen tsp
   (Y tour len, !tasks) <- parBB (bbDictC tspRef infty sortCands depth) ecDictYC
   return (reverse tour, len, tasks)
 
 
 -- sequential skeleton instantiation, "delayed" task creation
-tspSeqBuf :: ECRef TSP -> Bool -> Int -> Int
+tspSeqBuf :: IMRef TSP -> Bool -> Int -> Int
           -> Par ([Node], Distance, Integer)
 tspSeqBuf tspRef sortCands depth buf_sz = do
-  tsp <- readECRef' tspRef
+  tsp <- readIMRef' tspRef
   let !infty = maxlen tsp
   (Y tour len, !tasks) <-
     seqBufBB buf_sz (bbDictC tspRef infty sortCands depth) ecDictYC
@@ -404,10 +388,10 @@ tspSeqBuf tspRef sortCands depth buf_sz = do
 --   * run at least two schedulers on the root node, or
 --   * run on at least two nodes, and make sure that 'buf_sz >= 2'.
 --   Consider spark pool watermarks; must have 'buf_sz >= minSched > maxFish'.
-tspParBuf :: ECRef TSP -> Bool -> Int -> Int -> Int
+tspParBuf :: IMRef TSP -> Bool -> Int -> Int -> Int
           -> Par ([Node], Distance, Integer)
 tspParBuf tspRef sortCands depth buf_sz ntf_freq = do
-  tsp <- readECRef' tspRef
+  tsp <- readIMRef' tspRef
   let !infty = maxlen tsp
   (Y tour len, !tasks) <-
     parBufBB buf_sz ntf_freq (bbDictC tspRef infty sortCands depth) ecDictYC
@@ -425,7 +409,6 @@ declareStatic = mconcat [HdpH.declareStatic,
                          ECRef.declareStatic,
                          BranchAndBound.declareStatic,
                          declare $(static 'toClosureTSP_abs),
-                         declare $(static 'ecDictTSP),
                          declare $(static 'toClosurePath_abs),
                          declare $(static 'toClosureY_abs),
                          declare $(static 'ecDictY),
@@ -542,7 +525,7 @@ main = do
     tsp <- io $ readTSP filename
     -- distributing TSP instance to all nodes
     (tspRef, t_distribute) <- timeM' $ do
-      newECRefTSP tsp
+      newIMRef toClosureTSP [] tsp
     io $ putStrLn $ "t_distribute: " ++ show t_distribute
     -- dispatch on version
     ((tour, len, tasks), t_compute) <- timeM' $ case version of
@@ -553,9 +536,7 @@ main = do
       _ -> usage
     return ()
     -- deallocating TSP instance
-    ((), t_deallocate) <- timeM' $ do
-      freeECRef tspRef
-    io $ putStrLn $ "t_deallocate: " ++ show t_deallocate
+    freeIMRef tspRef
     -- print solution and statistics
     io $ putStrLn $ "tour: " ++ show tour
     io $ putStrLn $ "cities: " ++ show (length tour)
