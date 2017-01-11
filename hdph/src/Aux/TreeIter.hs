@@ -142,7 +142,7 @@ isPathSet xs = xs == nub xs
 
 -- Generating functions (or actions) map each path to a list of extensions
 -- (ordered left to right).
-type Generator    a = Path a ->    [a]
+type Generator    a = Path a ->   [a]
 type GeneratorM m a = Path a -> m [a]
 
 -- Generate a unique list of trees from the generating function `g`.
