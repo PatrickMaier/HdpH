@@ -388,6 +388,10 @@ freeECRef_abs :: ECRef a -> Thunk (Par ())
 freeECRef_abs ref = Thunk $
   io $ atomicModifyIORef' regRef (deleteEntry ref)
 
+deleteEntry :: ECRef a -> ECRefReg -> (ECRefReg, ())
+deleteEntry (ECRef label) reg =
+  (reg { table = Map.delete label (table reg) }, ())
+
 
 -----------------------------------------------------------------------------
 -- Non-local ECRef operations (potentially blocking)
@@ -476,9 +480,6 @@ gatherECRef_abs (ref, xC) = Thunk $ do
     Nothing              -> return xC    -- NB: ECRef has vanished, return xC
     Just (dict, cell, _) -> fmap (toClosure dict) $ io $ readIORef cell
 
-deleteEntry :: ECRef a -> ECRefReg -> (ECRefReg, ())
-deleteEntry (ECRef label) reg =
-  (reg { table = Map.delete label (table reg) }, ())
 
 -- | Like 'gatherECRef' but does not wrap the value returned in 'Maybe';
 -- aborts with a runtime error if 'gatherECRef' would have returned Nothing.
@@ -524,16 +525,9 @@ creatorIMRef = creatorECRef . unIMRef
 -- May block (and risk descheduling the calling thread).
 newIMRef :: (a -> Closure a) -> [Node] -> a -> Par (IMRef a)
 newIMRef toClo scope x =
-  IMRef <$> mkNewECRef imrefDictC scope x (toClo x)
-
--- Dictionary for immutable refs; note that 'toClosure' will never be called,
--- and that 'joinWith' will never overwrite anything!
-imrefDict :: ECRefDict a
-imrefDict = ECRefDict { toClosure = error "Aux.ECRef.IMRef: PANIC",
-                        joinWith  = \ _x _y -> Nothing }
-
-imrefDictC :: Closure (ECRefDict a)
-imrefDictC = $(mkClosure [| imrefDict |])
+  IMRef <$> mkNewECRef rrefDictC scope x (toClo x)
+  -- NOTE about 'rrefDictC': The IMRef operations won't access the dictionary
+  -- so we can pass any closured dictionary of appropriate type.
 
 -- | Like scopeECRef.
 scopeIMRef :: IMRef a -> Par [Node]
@@ -586,12 +580,12 @@ newRRef :: a -> Par (RRef a)
 newRRef x = do
   me <- myNode
   RRef <$> mkNewECRef rrefDictC [me] x (error "Aux.ECRef.newRRef: PANIC")
-  -- Note about the "error": This argument is never meant to be evaluated.
+  -- NOTE about 'error' call: This argument is never meant to be evaluated.
 
 -- Dictionary for remote refs; note that 'toClosure' will never be called,
 -- and that 'joinWith' will always overwrite the old value!
 rrefDict :: ECRefDict a
-rrefDict = ECRefDict { toClosure = error "Aux.ECRef.RRef: PANIC",
+rrefDict = ECRefDict { toClosure = error "Aux.ECRef.toClosure: PANIC",
                        joinWith  = \ _x y -> Just y }
 
 rrefDictC :: Closure (ECRefDict a)
@@ -715,7 +709,6 @@ declareStatic =
      declare $(static 'mkNewECRef_abs),
      declare $(static 'freeECRef_abs),
      declare $(static 'gatherECRef_abs),
-     declare $(static 'imrefDict),
      declare $(static 'rrefDict),
      declare $(static 'rfreeRRef_abs),
      declare $(static 'rwriteRRef'_abs),
