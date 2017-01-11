@@ -28,7 +28,7 @@ import Control.Category (Category, (<<<))
 import qualified Control.Category as Cat (id, (.))
 import Control.Concurrent (forkIO)
 import Control.Concurrent.Chan (Chan, newChan, writeChan, readChan)
-import Control.Concurrent.QSem (QSem, newQSem, signalQSem, waitQSem)
+import Control.Concurrent.QSem (newQSem, signalQSem, waitQSem)
 import Control.DeepSeq (NFData(rnf), ($!!), force)
 import Control.Monad (when, unless, forever, replicateM_)
 import Control.Monad.IO.Class (MonadIO(liftIO))
@@ -627,6 +627,9 @@ isClique bigG vertices =
 
 ---------------------------------------------------------------------------
 -- distributed graphs (immutable)
+--
+-- Could use IMRefs from ECRef module;
+-- won't do that here to demonstrate how to create immutable ECRefs.
 
 newECRefGraph :: Graph -> Par (ECRef Graph)
 newECRefGraph bigG = do
@@ -813,7 +816,7 @@ maxClqBndIterHdpHv2_abs :: (ECRef Graph,
                             Bool,
                             GIVar (Closure ()))
                         -> Thunk (Par ())
-maxClqBndIterHdpHv2_abs (bigGRef, boundRef, pth0, debug, gv) =
+maxClqBndIterHdpHv2_abs (bigGRef, boundRef, pth0, _debug, gv) =
   Thunk $ maxClqSearchAtPar' bigGRef boundRef pth0 >> rput gv unitC
 
 
@@ -1048,9 +1051,7 @@ main = do
            force <$> maxClqBndIterHdpHv2 bigGRef depth debug
       _ -> usage
     -- deallocating input graph
-    ((), t_deallocate) <- timeM' $ do
-      freeECRef bigGRef
-    io $ putStrLn $ "t_deallocate: " ++ show t_deallocate
+    freeECRef bigGRef
     -- print solution and statistics
     let bigCstar_alpha_inv = map (app (inv alpha <<< permHH)) bigCstar
     io $ putStrLn $ "     C*: " ++ show bigCstar_alpha_inv

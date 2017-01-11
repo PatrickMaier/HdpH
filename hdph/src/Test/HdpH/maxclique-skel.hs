@@ -43,12 +43,13 @@ import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
 
 import Control.Parallel.HdpH
        (RTSConf, defaultRTSConf, updateConf,
-        Par, runParIO_, allNodes, io,
+        Par, runParIO_, io,
         Thunk(Thunk), Closure, mkClosure, unClosure, unitC,
         StaticDecl, static, declare, register)
 import qualified Control.Parallel.HdpH as HdpH (declareStatic)
 import Aux.ECRef
-       (ECRef, ECRefDict(..), newECRef, freeECRef, readECRef', writeECRef)
+       (ECRef, ECRefDict(..), readECRef', writeECRef,
+        IMRef, newIMRef, freeIMRef, readIMRef')
 import qualified Aux.ECRef as ECRef (declareStatic)
 import Aux.BranchAndBound (Path, BBDict(..), seqBB, parBB)
 import qualified Aux.BranchAndBound as BranchAndBound (declareStatic)
@@ -248,6 +249,7 @@ toClosureGraph_abs bigG = Thunk bigG
 ---------------------------------------------------------------------------
 -- global immutable reference for graphs (replicated everywhere)
 
+{- !!!
 newECRefGraph :: Graph -> Par (ECRef Graph)
 newECRefGraph bigG = do
   nodes <- allNodes
@@ -259,7 +261,7 @@ ecDictGraph = ECRefDict { toClosure = toClosureGraph,
 
 ecDictGraphC :: Closure (ECRefDict Graph)
 ecDictGraphC = $(mkClosure [| ecDictGraph |])
-
+-}
 
 ---------------------------------------------------------------------------
 -- verification (of clique property, not of maximality)
@@ -390,22 +392,22 @@ ecDictYC = $(mkClosure [| ecDictY |])
 -- HdpH maxclique search using skeleton (with default task constructor)
 
 -- BnB dictionary for depth-bounded task generation
-bbDict :: ECRef Graph -> Int -> BBDict X Y
+bbDict :: IMRef Graph -> Int -> BBDict X Y
 bbDict bigGRef task_depth =
   BBDict {
     bbToClosure = toClosurePath,
     bbGenerator =
       \ path -> do
-        bigG <- readECRef' bigGRef
+        bigG <- readIMRef' bigGRef
         let bigC  = getClique path
         let sizeC = getCliquesize path
         let bigP  | null path = VertexSet.fromAscList $ verticesG bigG
                   | otherwise = getCandidates path
-        let vcs  = colourOrder bigG bigP
-        let expand (v, colours) bigP =
+        let vcs   = colourOrder bigG bigP
+        let expand (v, colours) candidates =
               X (v:bigC)
                 (sizeC + 1)
-                (bigP `VertexSet.intersection` adjacentG bigG v)
+                (candidates `VertexSet.intersection` adjacentG bigG v)
                 (colours - 1)
         return $
           zipWith expand vcs $
@@ -423,23 +425,23 @@ bbDict bigGRef task_depth =
     bbMkTask = Nothing
   }
 
-bbDictC :: ECRef Graph -> Int -> Closure (BBDict X Y)
+bbDictC :: IMRef Graph -> Int -> Closure (BBDict X Y)
 bbDictC bigGRef task_depth =
   $(mkClosure [| bbDictC_abs (bigGRef, task_depth) |])
 
-bbDictC_abs :: (ECRef Graph, Int) -> Thunk (BBDict X Y)
+bbDictC_abs :: (IMRef Graph, Int) -> Thunk (BBDict X Y)
 bbDictC_abs (bigGRef, task_depth) = Thunk $ bbDict bigGRef task_depth
 
 
 -- sequential skeleton instantiation
-maxClqSeq :: ECRef Graph -> Int -> Par ([Vertex], Integer)
+maxClqSeq :: IMRef Graph -> Int -> Par ([Vertex], Integer)
 maxClqSeq bigGRef task_depth = do
   (Y clique _, !tasks) <- seqBB (bbDictC bigGRef task_depth) ecDictYC
   return (clique, tasks)
 
 
 -- parallel skeleton instantiation
-maxClqPar :: ECRef Graph -> Int -> Par ([Vertex], Integer)
+maxClqPar :: IMRef Graph -> Int -> Par ([Vertex], Integer)
 maxClqPar bigGRef task_depth = do
   (Y clique _, !tasks) <- parBB (bbDictC bigGRef task_depth) ecDictYC
   return (clique, tasks)
@@ -449,45 +451,45 @@ maxClqPar bigGRef task_depth = do
 -- HdpH maxclique search using skeleton (with optimised task constructor)
 
 -- BnB dictionary for depth-bounded task generation
-bbDictOpt :: ECRef Graph -> Int -> BBDict X Y
+bbDictOpt :: IMRef Graph -> Int -> BBDict X Y
 bbDictOpt bigGRef task_depth =
   (bbDict bigGRef task_depth) {
     bbMkTask = Just $ optMkTask bigGRef
   }
 
-bbDictOptC :: ECRef Graph -> Int -> Closure (BBDict X Y)
+bbDictOptC :: IMRef Graph -> Int -> Closure (BBDict X Y)
 bbDictOptC bigGRef task_depth =
   $(mkClosure [| bbDictOptC_abs (bigGRef, task_depth) |])
 
-bbDictOptC_abs :: (ECRef Graph, Int) -> Thunk (BBDict X Y)
+bbDictOptC_abs :: (IMRef Graph, Int) -> Thunk (BBDict X Y)
 bbDictOptC_abs (bigGRef, task_depth) = Thunk $ bbDictOpt bigGRef task_depth
 
 
 -- optimised sequential skeleton instantiation
-maxClqSeqOpt :: ECRef Graph -> Int -> Par ([Vertex], Integer)
+maxClqSeqOpt :: IMRef Graph -> Int -> Par ([Vertex], Integer)
 maxClqSeqOpt bigGRef task_depth = do
   (Y clique _, !tasks) <- seqBB (bbDictOptC bigGRef task_depth) ecDictYC
   return (clique, tasks)
 
 
 -- optimised parallel skeleton instantiation
-maxClqParOpt :: ECRef Graph -> Int -> Par ([Vertex], Integer)
+maxClqParOpt :: IMRef Graph -> Int -> Par ([Vertex], Integer)
 maxClqParOpt bigGRef task_depth = do
   (Y clique _, !tasks) <- parBB (bbDictOptC bigGRef task_depth) ecDictYC
   return (clique, tasks)
 
 
 -- Optimised task generation (std B&B search instead of inner tree iterator)
-optMkTask :: ECRef Graph -> Path X -> ECRef Y -> Closure (Par (Closure ()))
+optMkTask :: IMRef Graph -> Path X -> ECRef Y -> Closure (Par (Closure ()))
 optMkTask bigGRef path0 yRef =
   $(mkClosure [| optMkTask_abs (bigGRef, path0C, yRef) |])
     where
       path0C = toClosurePath $ compressPath path0
 
-optMkTask_abs :: (ECRef Graph, Closure (Path X), ECRef Y)
+optMkTask_abs :: (IMRef Graph, Closure (Path X), ECRef Y)
               -> Thunk (Par (Closure ()))
 optMkTask_abs (bigGRef, path0C, yRef) = Thunk $ do
-  !bigG <- readECRef' bigGRef
+  !bigG <- readIMRef' bigGRef
   let path0 = unClosure path0C
   let y0 = Y (getClique path0) (getCliquesize path0)
   let bigPee | null path0 = VertexSet.fromAscList $ verticesG bigG
@@ -539,7 +541,7 @@ search bigG yRef y bigPee =
 -- HdpH maxclique search using skeleton (optimised, path-specific task constr)
 
 -- BnB dictionary for path-specific and optimised task generation
-bbDictPathOpt :: ECRef Graph -> Int -> Int -> BBDict X Y
+bbDictPathOpt :: IMRef Graph -> Int -> Int -> BBDict X Y
 bbDictPathOpt bigGRef task_depth cand_size =
   (bbDictOpt bigGRef task_depth) {
     bbIsTask =
@@ -548,18 +550,18 @@ bbDictPathOpt bigGRef task_depth cand_size =
         not (null path) && VertexSet.size (getCandidates path) <= cand_size
   }
 
-bbDictPathOptC :: ECRef Graph -> Int -> Int -> Closure (BBDict X Y)
+bbDictPathOptC :: IMRef Graph -> Int -> Int -> Closure (BBDict X Y)
 bbDictPathOptC bigGRef task_depth cand_size =
   $(mkClosure [| bbDictPathOptC_abs (bigGRef, task_depth, cand_size) |])
 
-bbDictPathOptC_abs :: (ECRef Graph, Int, Int) -> Thunk (BBDict X Y)
+bbDictPathOptC_abs :: (IMRef Graph, Int, Int) -> Thunk (BBDict X Y)
 bbDictPathOptC_abs (bigGRef, task_depth, cand_size) =
   Thunk $ bbDictPathOpt bigGRef task_depth cand_size
 
 
 -- optimised sequential skeleton instantiation; generates tasks when path
 -- is 'task_depth' long or there are no more than 'cand_size' candidates.
-maxClqSeqPathOpt :: ECRef Graph -> Int -> Int -> Par ([Vertex], Integer)
+maxClqSeqPathOpt :: IMRef Graph -> Int -> Int -> Par ([Vertex], Integer)
 maxClqSeqPathOpt bigGRef task_depth cand_size = do
   (Y clique _, !tasks) <-
     seqBB (bbDictPathOptC bigGRef task_depth cand_size) ecDictYC
@@ -568,7 +570,7 @@ maxClqSeqPathOpt bigGRef task_depth cand_size = do
 
 -- optimised sequential skeleton instantiation; generates tasks when path
 -- is 'task_depth' long or there are no more than 'cand_size' candidates.
-maxClqParPathOpt :: ECRef Graph -> Int -> Int -> Par ([Vertex], Integer)
+maxClqParPathOpt :: IMRef Graph -> Int -> Int -> Par ([Vertex], Integer)
 maxClqParPathOpt bigGRef task_depth cand_size = do
   (Y clique _, !tasks) <-
     parBB (bbDictPathOptC bigGRef task_depth cand_size) ecDictYC
@@ -586,7 +588,7 @@ declareStatic = mconcat [HdpH.declareStatic,
                          ECRef.declareStatic,
                          BranchAndBound.declareStatic,
                          declare $(static 'toClosureGraph_abs),
-                         declare $(static 'ecDictGraph),
+-- !!!                         declare $(static 'ecDictGraph),
                          declare $(static 'toClosurePath_abs),
                          declare $(static 'toClosureY_abs),
                          declare $(static 'ecDictY),
@@ -733,7 +735,7 @@ main = do
       else io $ putStrLn $ "t_construct: " ++ show t_permute
     -- distributing input graph to all nodes
     (bigGRef, t_distribute) <- timeM' $ do
-      newECRefGraph bigG
+      newIMRef toClosureGraph [] bigG
     io $ putStrLn $ "t_distribute: " ++ show t_distribute
     -- dispatch on version
     ((bigCstar, info), t_compute) <- timeM' $ case version of
@@ -745,9 +747,7 @@ main = do
       12 -> force <$> maxClqParPathOpt bigGRef depth cands
       _ -> usage
     -- deallocating input graph
-    ((), t_deallocate) <- timeM' $ do
-      freeECRef bigGRef
-    io $ putStrLn $ "t_deallocate: " ++ show t_deallocate
+    freeIMRef bigGRef
     -- print solution and statistics
     let bigCstar_alpha_inv = map (app (inv alpha <<< permHH)) bigCstar
     io $ putStrLn $ "     C*: " ++ show bigCstar_alpha_inv
