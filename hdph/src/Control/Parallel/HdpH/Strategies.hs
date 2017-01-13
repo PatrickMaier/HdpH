@@ -93,13 +93,13 @@ module Control.Parallel.HdpH.Strategies
 import Prelude
 import Control.DeepSeq (NFData, deepseq)
 import Control.Monad (zipWithM, zipWithM_)
-import Data.Functor ((<$>))
+--import Data.Functor ((<$>))   -- redundant import
 import Data.List (transpose)
-import Data.Monoid (mconcat)
+--import Data.Monoid (mconcat)  -- redundant import
 import System.Random (randomRIO)
 
 import Control.Parallel.HdpH 
-       (Par, io, fork, pushTo, {- spark, -} new, get, glob, rput, equiDist,
+       (Par, io, fork, pushTo, spawnAt, new, get, glob, rput, equiDist,
         Node, IVar, GIVar,
         LocT, here, Thunk(Thunk), CDict,
         Closure, unClosure, mkClosure, mkClosureLoc, apC, compC,
@@ -838,16 +838,7 @@ pushDivideAndConquer_abs (ns, trivial_clo, decompose_clo, combine_clo, f_clo) =
 -- Note that @'task'@ runs in the message handler; it should therefore
 -- terminate quickly. For longer computations, fork a low priority thread.
 rcall :: Closure (Par (Closure a)) -> [Node] -> Par [Closure a]
-rcall task nodes = mapM spawnTask nodes >>= mapM get
-  where
-    spawnTask node = do
-      v <- new
-      gv <- glob v
-      pushTo $(mkClosure [| rcall_abs (task, gv) |]) node
-      return v
-
-rcall_abs :: (Closure (Par (Closure a)), GIVar (Closure a)) -> Thunk (Par ())
-rcall_abs (task, gv) = Thunk $ unClosure task >>= rput gv
+rcall task nodes = mapM (\ node -> spawnAt node task) nodes >>= mapM get
 
 
 -- | Asynchronous parallel remote proceduce call.
@@ -882,5 +873,4 @@ declareStatic =
      declare $(static 'parDivideAndConquer_abs),
      declare $(static 'pushDivideAndConquer_abs),
      declare $(static 'parMapM2Level_abs),
-     declare $(static 'parMapM2LevelRelaxed_abs),
-     declare $(static 'rcall_abs)]
+     declare $(static 'parMapM2LevelRelaxed_abs)]
