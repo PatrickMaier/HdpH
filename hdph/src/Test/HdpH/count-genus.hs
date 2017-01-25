@@ -126,22 +126,19 @@ countGenusBelow g sgp@(SGP _ _ _ _ g_sgp)
 -----------------------------------------------------------------------------
 -- parallel algorithm, direct implementation
 
--- There appears to be a problem: Sparks are very rarely scheduled to
--- another node, despite a high number of FISH messages.
---
--- It may be that the these trees are very irregular, and that
--- a level cut off isn't the best option. In fact, with a given genus,
--- it looks like the higher lambda_1 the harder the problem is.
--- Potential solution: lower the seq_threshold for high lambda_1s
-
-
 -- Number of semigroups of genus 'g' that are descendents of 'sgp';
--- up to bottom 'seq_levels' of the semigroup tree are traversed sequentially,
--- whereas the higher levels are explored in parallel.
+-- 'seq_levels' determines how much of the semigroup tree is traversed
+-- sequentially, the actual number of levels depends on lambda_1 but is
+-- guaranteed to be between 'seq_levels' and 1/2 * 'seq_levels';
+-- a 'seq_levels' value between 1/3 * g and 5/12 * g appears to work well.
 countGenusBelowPar :: Int -> Int -> SGP -> Par Integer
-countGenusBelowPar seq_levels g sgp@(SGP _ _ _ m g_sgp) =
-  if g_sgp >= g - (max (seq_levels - m `div` 2) 0)  -- Taking lambda_1 into
-    then return $! countGenusBelow g sgp            -- acct helps with balance
+countGenusBelowPar seq_levels g sgp@(SGP _ _ _ m g_sgp) = do
+  -- sequential threshold; taking m (ie. lambda_1) into account helps balance
+  let threshold =
+        min ((m * seq_levels) `div` (2 * (g - seq_levels)) + g - seq_levels)
+            (g - seq_levels `div` 2)
+  if g_sgp >= threshold
+    then return $! countGenusBelow g sgp
     else do
       vs <- mapM spawn $ reverse $ children sgp   -- Reversing children
       n_g <- sum . map unClosure <$> mapM get vs  -- improves performance here
