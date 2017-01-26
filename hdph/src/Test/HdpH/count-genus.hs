@@ -91,7 +91,8 @@ children (SGP bigG_frzn bigS_frzn c m g) = runST $ do
           let c_tilde = c + s_tilde + 1
           let m_tilde | s_tilde == 0 && m == c = c_tilde
                       | otherwise              = m
-          -- construct representation of semigroup by copying bigG_frzn
+          -- construct representation of semigroup by copying bigG_frzn;
+          -- note that c_tilde >= 2
           bigG_tilde <- BV.new c_tilde
           bigG_tilde `BV.unionWith` bigG_frzn
           BV.unsafeInsert (c_tilde - 2) bigG_tilde
@@ -100,7 +101,9 @@ children (SGP bigG_frzn bigS_frzn c m g) = runST $ do
           bigS_tilde <- BV.new c_tilde
           bigS_tilde `BV.union` bigS
           bigS_tilde `BV.shiftL` (s_tilde + 1)
-          BV.unsafeInsert (c_tilde - 3) bigS_tilde
+          when (s_tilde > 0) $
+            -- note that c_tilde >= 3 since s_tilde > 0
+            BV.unsafeInsert (c_tilde - 3) bigS_tilde
           BV.unsafeInsert (c_tilde - 2) bigS_tilde
           BV.unsafeInsert (c_tilde - 1) bigS_tilde
           bigS_tilde_frzn <- BV.unsafeFreeze bigS_tilde
