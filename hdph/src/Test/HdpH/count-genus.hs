@@ -125,6 +125,23 @@ countGenusBelow g sgp@(SGP _ _ _ _ g_sgp)
   | g_sgp == g = 1
   | otherwise  = 0
 
+-- Lookup the number of semigroups of genus 'g' in the OEIS (if its there)
+lookupSeqA007323 :: Int -> Maybe Integer
+lookupSeqA007323 g
+  | 0 < g && g <= length seqA007323 = Just $! seqA007323 !! (g - 1)
+  | otherwise                       = Nothing
+    where
+      -- Sloane's online encyclopedia of integer sequences [http://oeis.org/]
+      seqA007323 :: [Integer]
+      seqA007323 = [1, 2, 4, 7, 12, 23, 39, 67, 118, 204, 343, 592, 1001, 1693,
+                    2857, 4806, 8045, 13467, 22464, 37396, 62194, 103246,
+                    170963, 282828, 467224, 770832, 1270267, 2091030, 3437839,
+                    5646773, 9266788, 15195070, 24896206, 40761087, 66687201,
+                    109032500, 178158289]
+
+agreeWithSeqA007323 :: Int -> Integer -> Maybe Bool
+agreeWithSeqA007323 g n_g = (n_g ==) <$> lookupSeqA007323 g
+
 
 -----------------------------------------------------------------------------
 -- parallel algorithm, direct implementation
@@ -237,12 +254,15 @@ def_g          = 30  -- genus
 def_seq_levels = 21  -- bottom levels of tree to traverse sequentially
 
 
-printResults :: (String, String, String, String, String) -> IO ()
-printResults (version, levels, input, output, runtime) =
-  zipWithM_ printTagged tags [version, levels, input, output, runtime]
+printResults :: (Show a1, Show a2, Show a3, Show a4, Show a5, Show a6)
+             => (a1, a2, a3, a4, a5, a6) -> IO ()
+printResults (version, levels, input, output, agree, runtime) =
+  zipWithM_ printTagged tags stuff
     where printTagged tag val = putStrLn (tag ++ val)
-          tags = ["VERSION: ", "SEQUENTIAL_LEVELS: ",
-                  "INPUT: ", "OUTPUT: ", "RUNTIME: "]
+          tags  = ["VERSION: ", "SEQUENTIAL_LEVELS: ", "INPUT: ",
+                   "OUTPUT: ", "OEIS_AGREES: ", "RUNTIME: "]
+          stuff = [show version, show levels, show input,
+                   show output, show agree, show runtime]
 
 
 main :: IO ()
@@ -255,13 +275,15 @@ main = do
   let (version, g, seq_levels) = parseArgs args
   initrand seed
   case version of
-      0 -> do (x, t) <- timeIO $ evaluate
+      0 -> do (n_g, t) <- timeIO $ evaluate
                           (countGenusBelow g root)
-              printResults ("v0", "-1", show g, show x, show t)
+              let agree = agreeWithSeqA007323 g n_g
+              printResults (0, -1, g, n_g, agree, t)
       1 -> do (output, t) <- timeIO $ evaluate =<< runParIO conf
                                (countGenusBelowPar seq_levels g root)
               case output of
-                Nothing -> return ()
-                Just x  ->
-                  printResults ("v1", show seq_levels, show g, show x, show t)
+                Nothing  -> return ()
+                Just n_g -> do
+                  let agree = agreeWithSeqA007323 g n_g
+                  printResults (1, seq_levels, g, n_g, agree, t)
       _ -> return ()
