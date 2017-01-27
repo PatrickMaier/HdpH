@@ -278,12 +278,12 @@ main = do
       0 -> do (n_g, t) <- timeIO $ evaluate
                           (countGenusBelow g root)
               let agree = agreeWithSeqA007323 g n_g
-              printResults (0, -1, g, n_g, agree, t)
+              printResults (0::Int, -1::Int, g, n_g, agree, t)
       1 -> do (output, t) <- timeIO $ evaluate =<< runParIO conf
                                (countGenusBelowPar seq_levels g root)
               case output of
                 Nothing  -> return ()
                 Just n_g -> do
                   let agree = agreeWithSeqA007323 g n_g
-                  printResults (1, seq_levels, g, n_g, agree, t)
+                  printResults (1::Int, seq_levels, g, n_g, agree, t)
       _ -> return ()
