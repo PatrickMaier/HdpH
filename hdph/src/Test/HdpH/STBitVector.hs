@@ -86,9 +86,11 @@ unsafeWrite = writeArray
 type Block = Word64
 
 blockWidth :: Int
+{-# INLINE blockWidth #-}
 blockWidth = finiteBitSize (zeroBits :: Block)
 
 logBlockWidth :: Int
+{-# INLINE logBlockWidth #-}
 logBlockWidth = countTrailingZeros blockWidth
 
 packBits :: [Int] -> Block
@@ -147,7 +149,7 @@ new :: Int -> ST s (STBitVector s)
 new supp = do
   let (maxBlockIdx, _) = fromIndex (supp - 1)
   a <- newArray (0, maxBlockIdx) zeroBits
-  return (STBV supp a)
+  return (STBV (max 0 supp) a)
 
 
 ------------------------------------------------------------------------------
@@ -261,6 +263,7 @@ size (STBV supp a) = do
 
 -- Returns the smallest i < supp in the bit set, or -1 if empty; linear in supp.
 findMin :: forall s . STBitVector s -> ST s Int
+{-# INLINABLE findMin #-}
 findMin (STBV supp a) = go 0
   where
     (maxBlockIdx, _) = fromIndex (supp - 1)
@@ -310,11 +313,20 @@ unsafeRemove i (STBV _ a) = do
 
 unionWith :: forall s . STBitVector s -> BitVector -> ST s ()
 {-# INLINABLE unionWith #-}
-unionWith bv@(STBV supp a) (BV supp2 a2) = do
+unionWith bv@(STBV supp a) bv2@(BV supp2 a2) =
+  if 0 < supp2 && supp2 <= supp && supp <= blockWidth
+    then do  -- fast path
+      x <- unsafeRead a 0
+      let y = unsafeAt a2 0
+      unsafeWrite a 0 $ x .|. y
+    else slowUnionWith bv bv2
+
+slowUnionWith :: forall s . STBitVector s -> BitVector -> ST s ()
+slowUnionWith bv@(STBV supp a) (BV supp2 a2) = do
   let (maxBlockIdx, _)  = fromIndex (supp - 1)
   let (maxBlockIdx2, _) = fromIndex (supp2 - 1)
   mapM_ unionAt [0 .. min maxBlockIdx maxBlockIdx2]
-  -- clear extraneous bits (that might have appeared due to support mismatch)
+  -- clear extraneous bits (that may have appeared due to support mismatch)
   clearSpareBits bv
     where
       unionAt :: Int -> ST s ()
@@ -327,13 +339,23 @@ union :: forall s . STBitVector s -> STBitVector s -> ST s ()
 {-# INLINABLE union #-}
 union bv bv2 = unionWith bv =<< unsafeFreeze bv2
 
+
 intersectWith :: forall s . STBitVector s -> BitVector -> ST s ()
 {-# INLINABLE intersectWith #-}
-intersectWith bv@(STBV supp a) (BV supp2 a2) = do
+intersectWith bv@(STBV supp a) bv2@(BV supp2 a2) =
+  if 0 < supp * supp2 && supp <= blockWidth && supp2 <= blockWidth
+    then do  -- fast path
+      x <- unsafeRead a 0
+      let y = unsafeAt a2 0
+      unsafeWrite a 0 $ x .&. y
+    else slowIntersectWith bv bv2
+
+slowIntersectWith :: forall s . STBitVector s -> BitVector -> ST s ()
+slowIntersectWith bv@(STBV supp a) (BV supp2 a2) = do
   let (maxBlockIdx, _)  = fromIndex (supp - 1)
   let (maxBlockIdx2, _) = fromIndex (supp2 - 1)
   mapM_ intersectAt [0 .. min maxBlockIdx maxBlockIdx2]
-  -- clear blocks (that might not have been cleared due to support mismatch)
+  -- clear blocks (that may not have been cleared due to support mismatch)
   clearBlocksR bv (min maxBlockIdx maxBlockIdx2)
     where
       intersectAt :: Int -> ST s ()
@@ -359,7 +381,16 @@ intersect bv bv2 = intersectWith bv =<< unsafeFreeze bv2
 --   to the right involves left shifts at the block level, and vice versa.
 
 shiftL :: forall s . STBitVector s -> Int -> ST s ()
+{-# INLINABLE shiftL #-}
 shiftL bv@(STBV supp a) i = do
+  if 0 < supp && supp <= blockWidth && i < blockWidth
+    then do  -- fast path
+      x <- unsafeRead a 0
+      unsafeWrite a 0 $ x `unsafeShiftR` i
+    else slowShiftL bv i
+
+slowShiftL :: forall s . STBitVector s -> Int -> ST s ()
+slowShiftL bv@(STBV supp a) i = do
   let (maxBlockIdx, _)   = fromIndex (supp - 1)
   let (blockOfs, bitOfs) = fromIndex i
   let bitOfs_inv = blockWidth - bitOfs
@@ -382,8 +413,18 @@ shiftL bv@(STBV supp a) i = do
   -- zero remaining blocks "to the right"
   clearBlocksR bv (maxBlockIdx - blockOfs)
 
+
 shiftR :: forall s . STBitVector s -> Int -> ST s ()
-shiftR bv@(STBV supp a) i = do
+{-# INLINABLE shiftR #-}
+shiftR bv@(STBV supp a) i =
+  if 0 < supp && supp <= blockWidth && i < blockWidth
+    then do  -- fast path
+      x <- unsafeRead a 0
+      unsafeWrite a 0 $ x `unsafeShiftL` i
+    else slowShiftR bv i
+
+slowShiftR :: forall s . STBitVector s -> Int -> ST s ()
+slowShiftR bv@(STBV supp a) i = do
   let (maxBlockIdx, _)   = fromIndex (supp - 1)
   let (blockOfs, bitOfs) = fromIndex i
   let bitOfs_inv = blockWidth - bitOfs
