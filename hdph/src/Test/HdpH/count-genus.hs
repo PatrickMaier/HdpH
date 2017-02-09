@@ -152,23 +152,41 @@ bfs _ []    = []
 -----------------------------------------------------------------------------
 -- parallel algorithm, direct implementation
 
--- Number of semigroups of genus 'g' that are descendents of 'sgp';
--- 'seq_levels' determines how much of the semigroup tree is traversed
+-- triple of 3 strict Integers
+data Integer3 = Integer3 !Integer !Integer !Integer deriving (Eq, Show, Generic)
+
+instance NFData Integer3 where
+  rnf x = x `seq` ()
+
+instance Serialize Integer3
+
+sum3 :: [Integer3] -> Integer3
+sum3 xyzs = Integer3 (sum xs) (sum ys) (sum zs)
+  where
+    (xs, ys, zs) = unzip3 $ map (\ (Integer3 x y z) -> (x,y,z)) xyzs
+
+
+-- Returns a triple consisting of
+-- * the number of semigroups of genus 'g' that are descendents of 'sgp',
+-- * the number of tasks spawned, and
+-- * the number of leaf (i.e. sequentially executed) tasks.
+-- Argument 'seq_levels' determines how much of the semigroup tree is traversed
 -- sequentially, the actual number of levels depends on lambda_1 but is
 -- guaranteed to be between 'seq_levels' and 1/2 * 'seq_levels';
 -- a 'seq_levels' value between 1/3 * g and 5/12 * g appears to work well.
-countGenusBelowPar :: Int -> Int -> SGP -> Par Integer
+countGenusBelowPar :: Int -> Int -> SGP -> Par Integer3
 countGenusBelowPar seq_levels g sgp@(SGP _ _ _ m g_sgp) = do
   -- sequential threshold; taking m (ie. lambda_1) into account helps balance
   let threshold =
         min ((m * seq_levels) `div` (2 * (g - seq_levels)) + g - seq_levels)
             (g - seq_levels `div` 2)
-  if g_sgp >= threshold
-    then return $! countGenusBelow g sgp
+  if seq_levels >= g || g_sgp >= threshold
+    then return $! Integer3 (countGenusBelow g sgp) 0 1
     else do
-      vs <- mapM spawn $ reverse $ children sgp   -- Reversing children
-      n_g <- sum . map unClosure <$> mapM get vs  -- improves performance here
-      return $! n_g
+      -- Reversing children when spawning improves performance
+      vs <- mapM spawn $ reverse $ children sgp
+      Integer3 n_g tasks leaf_tasks <- sum3 . map unClosure <$> mapM get vs
+      return $! Integer3 n_g (tasks + fromIntegral (length vs)) leaf_tasks
         where
           spawn sgp_tilde = do
             v <- new
@@ -178,18 +196,18 @@ countGenusBelowPar seq_levels g sgp@(SGP _ _ _ m g_sgp) = do
             spark one task
             return v
 
-countGenusBelowPar_abs :: (Int, Int, SGP, GIVar (Closure Integer))
+countGenusBelowPar_abs :: (Int, Int, SGP, GIVar (Closure Integer3))
                        -> Thunk (Par ())
 countGenusBelowPar_abs (seq_levels, g, sgp_tilde, gv) = Thunk $ do
-  n_g <- countGenusBelowPar seq_levels g sgp_tilde
-  rput gv $ toClosureInteger $! n_g
+  result <- countGenusBelowPar seq_levels g sgp_tilde
+  rput gv $ toClosureInteger3 $! result
 
 
-toClosureInteger :: Integer -> Closure Integer
-toClosureInteger i = $(mkClosure [| toClosureInteger_abs i |])
+toClosureInteger3 :: Integer3 -> Closure Integer3
+toClosureInteger3 xyz = $(mkClosure [| toClosureInteger3_abs xyz |])
 
-toClosureInteger_abs :: Integer -> Thunk Integer
-toClosureInteger_abs i = Thunk i
+toClosureInteger3_abs :: Integer3 -> Thunk Integer3
+toClosureInteger3_abs xyz = Thunk xyz
 
 
 -----------------------------------------------------------------------------
@@ -224,7 +242,7 @@ declareStatic =
   mconcat
     [HdpH.declareStatic,
      declare $(static 'countGenusBelowPar_abs),
-     declare $(static 'toClosureInteger_abs)]
+     declare $(static 'toClosureInteger3_abs)]
 
 
 -----------------------------------------------------------------------------
@@ -284,15 +302,17 @@ def_seq_levels = 12  -- bottom levels of tree to traverse sequentially
 def_ridx       =  0  -- index of root (0 is the root of the whole tree)
 
 
-printResults :: (Show a1, Show a2, Show a3, Show a4, Show a5, Show a6, Show a7)
-             => (a1, a2, a3, a4, a5, a6, a7) -> IO ()
-printResults (version, levels, ridx, input, output, agree, runtime) =
+printResults :: (Show a1, Show a2, Show a3, Show a4, Show a5, Show a6,
+                 Show a7, Show a8, Show a9)
+             => (a1, a2, a3, a4, a5, a6, a7, a8, a9) -> IO ()
+printResults (ver, levels, ridx, input, output, agree, runtime, tasks, leaves) =
   zipWithM_ printTagged tags stuff
     where printTagged tag val = putStrLn (tag ++ val)
           tags  = ["VERSION: ", "SEQUENTIAL_LEVELS: ", "ROOT_INDEX: ",
-                   "GENUS: ", "COUNT: ", "OEIS_AGREES: ", "RUNTIME: "]
-          stuff = [show version, show levels, show ridx, show input,
-                   show output, show agree, show runtime]
+                   "GENUS: ", "COUNT: ", "OEIS_AGREES: ", "RUNTIME: ",
+                   "TASKS: ", "SEQUENTIAL_TASKS: "]
+          stuff = [show ver, show levels, show ridx, show input, show output,
+                   show agree, show runtime, show tasks, show leaves]
 
 
 main :: IO ()
@@ -309,13 +329,15 @@ main = do
                             (countGenusBelow g $ sgps !! ridx)
               let agree | ridx == 0 = agreeWithSeqA007323 g n_g
                         | otherwise = Nothing
-              printResults (0::Int, -1::Int, ridx, g, n_g, agree, t)
+              printResults (0::Int, -1::Int, ridx, g, n_g, agree,
+                            t, 0::Integer, 1::Integer)
       1 -> do (output, t) <- timeIO $ evaluate =<< runParIO conf
                                (countGenusBelowPar seq_levels g $ sgps !! ridx)
               case output of
                 Nothing  -> return ()
-                Just n_g -> do
+                Just (Integer3 n_g tasks leaf_tasks) -> do
                   let agree | ridx == 0 = agreeWithSeqA007323 g n_g
                             | otherwise = Nothing
-                  printResults (1::Int, seq_levels, ridx, g, n_g, agree, t)
+                  printResults (1::Int, seq_levels, ridx, g, n_g, agree,
+                                t, tasks, leaf_tasks)
       _ -> return ()
