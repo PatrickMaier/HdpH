@@ -382,7 +382,7 @@ intersect bv bv2 = intersectWith bv =<< unsafeFreeze bv2
 
 shiftL :: forall s . STBitVector s -> Int -> ST s ()
 {-# INLINABLE shiftL #-}
-shiftL bv@(STBV supp a) i = do
+shiftL bv@(STBV supp a) i =
   if 0 < supp && supp <= blockWidth && i < blockWidth
     then do  -- fast path
       x <- unsafeRead a 0
