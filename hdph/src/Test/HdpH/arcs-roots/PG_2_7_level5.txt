@@ -1,0 +1,9 @@
+c 5-arc roots for all 6-arcs in ProjectiveSpace(2,GF(7))
+
+a 1 2 9 12 22
+r 29 31 33 37 40 49 56
+c |stab|=6
+
+a 1 2 9 12 23
+r 37 41 45 54
+c |stab|=6
