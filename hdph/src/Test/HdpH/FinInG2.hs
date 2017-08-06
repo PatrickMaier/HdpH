@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 -- module Main where  -- Uncomment for TESTING
 module Test.HdpH.FinInG2
@@ -75,13 +76,17 @@ import Data.Array.Unboxed (UArray)
 import Data.Function (on)
 import Data.List (sort, group, groupBy)
 import qualified Data.List (lines)
+import Data.Serialize (Serialize)
 import Data.Word (Word16)
+import GHC.Generics (Generic)
 
 
 ------------------------------------------------------------------------------
 -- space
 
-data Space = Space Lines Points Span Meet deriving (Show)
+data Space = Space Lines Points Span Meet deriving (Show, Generic)
+
+instance Serialize Space
 
 -- Predicate to check regularity and exclude some trivial cases
 isSpace :: Space -> Bool
@@ -186,7 +191,7 @@ parsePoint s =
 --
 -- Points are represented as postive integers.
 
-newtype Point = Point Word16 deriving (Eq, Ord, NFData, Enum)
+newtype Point = Point Word16 deriving (Eq, Ord, NFData, Enum, Serialize)
 
 isPoint :: Point -> Bool
 isPoint (Point a) = a > 0
@@ -200,7 +205,7 @@ instance Read Point where
                   readsPrec d
 
 
-newtype PointSet = PointSet Word16Set deriving (NFData, Show)
+newtype PointSet = PointSet Word16Set deriving (NFData, Show, Serialize)
 
 instance Set PointSet where
   type Elem PointSet = Point
@@ -216,7 +221,7 @@ instance Set PointSet where
 --
 -- Lines are represented as postive integers.
 
-newtype Line = Line Word16 deriving (Eq, Ord, NFData, Enum)
+newtype Line = Line Word16 deriving (Eq, Ord, NFData, Enum, Serialize)
 
 isLine :: Line -> Bool
 isLine (Line l) = l > 0
@@ -230,7 +235,7 @@ instance Read Line where
                   readsPrec d
 
 
-newtype LineSet = LineSet Word16Set deriving (NFData, Show)
+newtype LineSet = LineSet Word16Set deriving (NFData, Show, Serialize)
 
 instance Set LineSet where
   type Elem LineSet = Line
@@ -244,7 +249,7 @@ instance Set LineSet where
 ------------------------------------------------------------------------------
 -- mapping points to the set of all lines they are on
 
-newtype Lines = Lines VecWord16Set deriving (NFData, Show)
+newtype Lines = Lines VecWord16Set deriving (NFData, Show, Serialize)
 
 instance VecSet Lines where
   type Idx Lines = Point
@@ -267,7 +272,7 @@ makeLines pts = newVecSet lss
 ------------------------------------------------------------------------------
 -- mapping lines to the set of all their points
 
-newtype Points = Points VecWord16Set deriving (NFData, Show)
+newtype Points = Points VecWord16Set deriving (NFData, Show, Serialize)
 
 instance VecSet Points where
   type Idx Points = Line
@@ -290,7 +295,7 @@ makePoints lns = newVecSet ass
 ------------------------------------------------------------------------------
 -- mapping 2 points to the line they span
 
-newtype Span = Span MatWord16 deriving (NFData, Show)
+newtype Span = Span MatWord16 deriving (NFData, Show, Serialize)
 
 instance Mat Span where
   type Ix Span = Point
@@ -312,7 +317,7 @@ makeSpan lines = newMat rank abls
 ------------------------------------------------------------------------------
 -- mapping 2 lines to the point where they meet
 
-newtype Meet = Meet MatWord16 deriving (NFData, Show)
+newtype Meet = Meet MatWord16 deriving (NFData, Show, Serialize)
 
 instance Mat Meet where
   type Ix Meet = Line
