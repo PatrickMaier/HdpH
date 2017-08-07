@@ -1,0 +1,5 @@
+c 4-arc roots for all 7-arcs in ProjectiveSpace(2,GF(2^3))
+
+c #1 |stab|=72 |candidates|=30
+a 1 2 3 4
+r 18 19 20 29 30 31 32 33 34 35 36 42 43 44 45 50 51 52 53 55 56 57 62 63 64 65 66 67 68 69
