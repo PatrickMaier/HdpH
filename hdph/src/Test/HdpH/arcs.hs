@@ -19,19 +19,21 @@ import Control.DeepSeq (NFData(rnf), ($!!))
 import Control.Exception (evaluate)
 import Control.Monad (when, zipWithM_)
 import qualified Data.IntSet as Set
-import qualified Data.IntMap.Strict as Map
-import Data.List (foldl', isPrefixOf, sortOn)
+import Data.IORef (IORef, newIORef, atomicWriteIORef, readIORef)
+import Data.List (foldl', isPrefixOf, stripPrefix)
 import qualified Data.List as List (lines)
 import Data.Maybe (fromJust)
-import Data.Ord (Down(Down))
 import Data.Time.Clock (NominalDiffTime, diffUTCTime, getCurrentTime)
+import Data.Serialize (Serialize)
+import GHC.Generics (Generic)
 import System.Environment (getArgs)
 import System.IO (stdout, stderr, hSetBuffering, BufferMode(..))
+import System.IO.Unsafe (unsafePerformIO)
 import System.Random (mkStdGen, setStdGen)
 
 import Control.Parallel.HdpH
        (RTSConf(..), defaultRTSConf, updateConf,
-        Par, runParIO, spark, new, get, glob, rput, GIVar,
+        Par, runParIO, io, spawn, get,
         Thunk(Thunk), Closure, unClosure, mkClosure,
         static, StaticDecl, declare, register)
 import qualified Control.Parallel.HdpH as HdpH (declareStatic)
@@ -40,6 +42,20 @@ import Control.Parallel.HdpH.Dist (one)
 import Test.HdpH.FinInG2
        (Space, points, pointsOf, span, readSpace,
         Point, parseListOfPoint, parseSortedListOfPoint, elemsSet)
+
+
+---------------------------------------------------------------------------
+-- global reference holding ambient space
+
+spaceRef :: IORef Space
+{-# NOINLINE spaceRef #-}
+spaceRef = unsafePerformIO $ newIORef $ error "spaceRef not initialised"
+
+setSpace :: Space -> IO ()
+setSpace = atomicWriteIORef spaceRef
+
+getSpace :: Par Space
+getSpace = io $ readIORef spaceRef
 
 
 ---------------------------------------------------------------------------
@@ -111,19 +127,21 @@ isCompleteArc sp arc =
 
 
 ---------------------------------------------------------------------------
--- search tree
+-- search tree and sequential algorithm
 
 -- Search tree node
 data Node = Node {
-              space       :: !Space,      -- ambient space
               k           :: !Int,        -- target arc size
               arc         :: ![Point],    -- current arc
               nArc        :: !Int,        -- size of current arc
               candidates  :: !SetOfPoint, -- candidates for extension of arc
               bound       :: !Int }       -- upper bound on arc of candidates
+              deriving (Generic)
+
+instance Serialize Node
 
 instance NFData Node where
-  rnf node = rnf (space node) `seq` rnf (k node) `seq`
+  rnf node = rnf (k node) `seq`
              rnf (arc node) `seq` rnf (nArc node) `seq`
              rnf (candidates node) `seq` rnf (bound node) `seq` ()
 
@@ -141,7 +159,7 @@ feasible node = nArc node + bound node >= k node
 -- Generate root node of the search tree
 mkRoot :: Space -> Int -> Maybe ([Point], SetOfPoint) -> Node
 mkRoot sp desired_k maybe_root = let
-    node0 = Node { space = sp, k = desired_k, arc = [], nArc = 0,
+    node0 = Node { k = desired_k, arc = [], nArc = 0,
                    candidates = emptyP, bound = 0 }
   in case maybe_root of
        Nothing      -> node0 { candidates = fromListP $ points sp,
@@ -160,13 +178,12 @@ shrinkCandsOnExtArc sp arc c cands =
   --       however, this results in less efficient code.
 
 
-generate :: Node -> [Node]
-generate parent =
+generate :: Space -> Node -> [Node]
+generate space parent =
   concat $ zipWith mkFeasibleNode (take (n_cs - k parent + n_as + 1) cs) cands
   -- NOTE: Dropping last `gap` candidates because remaining candidate sets would
   --       have less than `gap` elements, where `gap = k parent - (n_as + 1)`.
     where
-      sp    = space parent
       as    = arc parent
       n_as  = nArc parent
       cs    = toAscListP $ candidates parent
@@ -176,43 +193,98 @@ generate parent =
       mkFeasibleNode c cands =
         if feasible child then [child] else []
           where
-            cands' = shrinkCandsOnExtArc sp as c cands
+            cands' = shrinkCandsOnExtArc space as c cands
             child = parent { arc  = c:as,
                              nArc = n_as + 1,
                              candidates = cands',
                              bound = sizeP cands' }
 
 
--- Options governing counting of arcs
-type Opts = ()
-
-
 -- Returns number of complete (1st component) and incomplete (2nd component)
 -- 'k'-arcs below node 'current', and the call/depth histogram (3rd component).
-countArcs :: Opts -> Node -> (Int, Int, [Int])
-countArcs opts current =
+countArcs :: Space -> Node -> (Int, Int)
+countArcs space current =
   if final current
-    then if complete
-           then (1,0,[1])
-           else (0,1,[1])
-    else reduce $ map (countArcs opts) $ generate current
+    then if complete then (1,0) else (0,1)
+    else reduce $ map (countArcs space) $ generate space current
       where
         complete = nullP (candidates current) &&
-                   isCompleteArc (space current) (arc current)
-        reduce :: [(Int, Int, [Int])] -> (Int, Int, [Int])
-        reduce xyzs = go 0 0 [] xyzs
+                   isCompleteArc space (arc current)
+        reduce :: [(Int, Int)] -> (Int, Int)
+        reduce xys = go 0 0 xys
           where
-            go !sxs !sys !szs xyzs =
-              case xyzs of
-               (x,y,z):xyzs' -> go (sxs + x) (sys + y) (szs +* z) xyzs'
-               []            -> (sxs, sys, 1:szs)
+            go !s1 !s2 ((x,y):xys) = go (s1 + x) (s2 + y) xys
+            go !s1 !s2 []          = (s1, s2)
 
 
--- sum of call/depth histograms
-(+*) :: [Int] -> [Int] -> [Int]
-xs     +* []     = xs
-[]     +* ys     = ys
-(x:xs) +* (y:ys) = z:zs where { !z = x + y; !zs = xs +* ys }
+---------------------------------------------------------------------------
+-- parallel algorithm, direct implementation
+
+-- unsigned integer histograms
+type UIntHist = [Int]
+
+-- addition of two histograms
+(|+|) :: UIntHist -> UIntHist -> UIntHist
+xs     |+| []     = xs
+[]     |+| ys     = ys
+(x:xs) |+| (y:ys) = z:zs where { !z = x + y; !zs = xs |+| ys }
+
+-- totaling of histogram
+totalHist :: UIntHist -> Int
+totalHist = sum
+
+-- empty histogram
+emptyHist :: UIntHist
+emptyHist = []
+
+-- push zero to histogram
+push0Hist :: UIntHist -> UIntHist
+push0Hist hist = 0:hist
+
+-- push one to histogram
+push1Hist :: UIntHist -> UIntHist
+push1Hist hist = 1:hist
+
+
+data Result = Result !Int !Int !Int !UIntHist deriving (Generic)
+
+instance Serialize Result
+
+instance NFData Result where
+  rnf (Result complete incomplete seq_tasks spawn_hist) = rnf spawn_hist
+
+reduceResults :: [Result] -> Result
+reduceResults results =
+  go 0 0 0 emptyHist results
+    where
+      go !s1 !s2 !s3 !h1 results =
+        case results of
+          (Result x y z h):rest -> go (s1 + x) (s2 + y) (s3 + z) (h1 |+| h) rest
+          []                    -> Result s1 s2 s3 (push1Hist h1)
+
+toClosureResult :: Result -> Closure Result
+toClosureResult result = $(mkClosure [| toClosureResult_abs result |])
+
+toClosureResult_abs :: Result -> Thunk Result
+toClosureResult_abs result = Thunk result
+
+
+countArcsPar :: SeqSize -> Node -> Par Result
+countArcsPar seqsz current = do
+  space <- getSpace
+  if bound current <= seqsz || final current
+    then let (complete, incomplete) = countArcs space current in
+         return $! Result complete incomplete 1 (push1Hist emptyHist)
+    else do
+      let tasks = [$(mkClosure [| countArcsPar_abs (seqsz, child) |])
+                    | child <- generate space current]
+      vs <- mapM (spawn one) tasks
+      result <- reduceResults . map unClosure <$> mapM get vs
+      return $! result
+
+countArcsPar_abs :: (SeqSize, Node) -> Thunk (Par (Closure Result))
+countArcsPar_abs (seqsz, child) = Thunk $
+  toClosureResult <$> countArcsPar seqsz child
 
 
 ---------------------------------------------------------------------------
@@ -246,22 +318,7 @@ parseCandidates _   []              = error $ "parseCandidates: EOF"
 
 
 ---------------------------------------------------------------------------
--- main, auxiliaries, argument parsing, etc.
-
--- time an IO action
-timeIO :: IO a -> IO (a, NominalDiffTime)
-timeIO action = do t0 <- getCurrentTime
-                   x <- action
-                   t1 <- getCurrentTime
-                   return (x, diffUTCTime t1 t0)
-
-
--- initialize random number generator
-initrand :: Int -> IO ()
-initrand seed = do
-  when (seed /= 0) $ do
-    setStdGen (mkStdGen seed)
-
+-- argument parsing
 
 -- Option: version to execute; default: V0 (sequential)
 data Version = V0 | V1 deriving (Eq, Ord, Show)
@@ -374,24 +431,92 @@ printResults
                    show t, show hist, show tasks, show leaves]
 
 
+-----------------------------------------------------------------------------
+-- Static declaration (just before 'main')
+
+-- Empty splice; TH hack to make all environment abstractions visible.
+$(return [])
+
+declareStatic :: StaticDecl
+declareStatic =
+  mconcat
+    [HdpH.declareStatic,
+     declare $(static 'toClosureResult_abs),
+     declare $(static 'countArcsPar_abs)]
+
+
+---------------------------------------------------------------------------
+-- main, auxiliaries, etc.
+
+-- time an IO action
+timeIO :: IO a -> IO (a, NominalDiffTime)
+timeIO action = do t0 <- getCurrentTime
+                   x <- action
+                   t1 <- getCurrentTime
+                   return (x, diffUTCTime t1 t0)
+
+
+-- initialize random number generator
+initrand :: Int -> IO ()
+initrand seed = do
+  when (seed /= 0) $ do
+    setStdGen (mkStdGen seed)
+
+
+-- parse runtime system config options (+ seed for random number generator)
+-- abort if there is an error
+parseOpts :: [String] -> IO (RTSConf, Int, [String])
+parseOpts args = do
+  either_conf <- updateConf args defaultRTSConf
+  case either_conf of
+    Left err_msg             -> error $ "parseOpts: " ++ err_msg
+    Right (conf, [])         -> return (conf, 0, [])
+    Right (conf, arg':args') ->
+      case stripPrefix "-rand=" arg' of
+        Just s  -> return (conf, read s, args')
+        Nothing -> return (conf, 0,      arg':args')
+
+
 main :: IO ()
 main = do
+  hSetBuffering stdout LineBuffering
+  hSetBuffering stderr LineBuffering
+  register declareStatic
+  opts_args <- getArgs
+  (conf, seed, args) <- parseOpts opts_args
+  initrand seed
   -- parsing command line arguments (no real error checking)
   args <- getArgs
   let (ver, sfile, k, rfile, root, seqsz) = parseArgs args
-  -- read and construct ambient space and root node of search tree
-  node0 <- do
-    sp <- readSpace sfile
-    maybe_root <- readRoot rfile root
-    return $!! mkRoot sp k maybe_root
   putStrLn $ "arcs" ++ dispVersion ver ++ dispSpaceFile sfile ++ dispK k ++
              dispRootsFile rfile ++ dispRoot root ++
              dispSeqSize seqsz
+  -- read, construct and record ambient space
+  !space <- do { (return $!!) =<< readSpace sfile }
+  setSpace space
+  -- construct root node of search tree
+  !node0 <- do
+    maybe_root <- readRoot rfile root
+    return $!! mkRoot space k maybe_root
   -- classify k-arcs
-  let opts = ()
+  putStrLn $ "Classifying " ++ show k ++ "-arcs ..."
   case ver of
-    V0 -> do ((compl, incompl, call_hist), t) <- timeIO $ evaluate $
-                                                   countArcs opts node0
+    V0 -> do ((!complete, !incomplete), t) <- timeIO $ evaluate $
+                                                countArcs space node0
+             let full_spawn_hist =
+                   foldl' (\ h _ -> push0Hist h) emptyHist (arc node0)
+             let tasks = totalHist full_spawn_hist
              printResults (V0, 0::SeqSize, sfile, k, rfile, root,
-                           compl, incompl, t, []::[Int], 0::Int, 1::Int)
-    _  -> return ()
+                           complete, incomplete,
+                           t, full_spawn_hist, tasks, 0::Int)
+    V1 -> do (!output, t) <- timeIO $ evaluate =<< runParIO conf
+                               (countArcsPar seqsz node0)
+             case output of
+               Nothing  -> return ()
+               Just (Result complete incomplete seq_tasks spawn_hist) -> do
+                 let full_spawn_hist =
+                       foldl' (\ h _ -> push0Hist h) spawn_hist (arc node0)
+                 let tasks = totalHist full_spawn_hist
+                 printResults (V1, seqsz, sfile, k, rfile, root,
+                               complete, incomplete,
+                               t, full_spawn_hist, tasks, seq_tasks)
