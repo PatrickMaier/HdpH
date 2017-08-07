@@ -1,9 +1,9 @@
 c 5-arc roots for all 7-arcs in ProjectiveSpace(2,GF(2^3))
 
+c #1 |stab|=12 |candidates|=13
 a 1 2 3 4 29
 r 30 31 32 33 34 42 45 52 55 56 63 66 68
-c |stab|=12
 
+c #2 |stab|=12 |candidates|=5
 a 1 2 3 4 18
 r 19 20 55 56 57
-c |stab|=12

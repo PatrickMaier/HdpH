@@ -294,7 +294,7 @@ end;;
 ## Given a non-empty list 'nodes' of search tree nodes corresponding
 ## to one level of the tree, print arcs and candidates to 'file'.
 PrintSearchTreeNodes := function(nodes, file)
-  local out, space, points, k, l, node, a, c;
+  local out, space, points, k, l, node, a, c, i;
 
   space  := nodes[1].ps;
   points := nodes[1].pts;
@@ -309,8 +309,15 @@ PrintSearchTreeNodes := function(nodes, file)
 
   AppendTo(out, "c ", l, "-arc roots for all ", k, "-arcs in ", space, "\n");
 
+  i := 0;
   for node in nodes do
     AppendTo(out, "\n");
+    i := i + 1;
+
+    # write comment (root #, size of stabiliser, number of candidates)
+    AppendTo(out, "c #", i);
+    AppendTo(out, " |stab|=", Size(node.stab));
+    AppendTo(out, " |candidates|=", Size(node.cands), "\n");
 
     # write arc
     AppendTo(out, "a");  ## prefix "a" stands for "arc"
@@ -325,9 +332,6 @@ PrintSearchTreeNodes := function(nodes, file)
       AppendTo(out, " ", Position(points, c));
     od;
     AppendTo(out, "\n");
-
-    # write size of stabiliser group (as a comment)
-    AppendTo(out, "c |stab|=", Size(node.stab), "\n");
   od;
 
   CloseStream(out);
