@@ -1,5 +1,6 @@
 ##
-## Enumerating arcs in PG(2,q), with orbital symmetry breaking
+## Enumerating arcs in PG(2,q), with orbital symmetry breaking and
+## search tree cutoff based on size of candidates set.
 ##
 ## Refers to Open Problem 4.10(f) in
 ##   Hirschfeld, Thas. Open Problems in Finite Projective Spaces. 2015.
@@ -102,8 +103,15 @@ IsNode := function(r)
 end;;
 
 
-# Comparison function for sorting nodes by size of cands in descending order.
-ByDescCandsSize := function(x, y) return Size(x.cands) > Size(y.cands); end;;
+# Comparison function for sorting nodes by size of 'cands' in descending order,
+# in case of a tie by size of 'arc' in ascending order.
+ByDescCandsAscArc := function(x, y)
+  if Size(x.cands) = Size(y.cands) then
+    return Size(x.arc) < Size(y.arc);
+  else
+    return Size(x.cands) > Size(y.cands);
+  fi;
+end;;
 
 
 ## Given a projective space 'ps' and positive integer 'k',
@@ -139,48 +147,54 @@ end;
 
 ## Given a search tree node 'node', return a list of children of 'node'
 ## in the search tree when enumerating the 'node.k'-arcs.
-GenerateNodes := function(node)
-  local orbits, orb, c, children, child, candidates, stab2;
+## 'cutoff' is a lower bound on the number of candidates; the function stops
+## generating children as soon as the number candidates drops below 'cutoff'.
+## Assumes that 'node.stab' is not [] and stops tree exploration
+## as soon as 'node.stab' becomes trivial.
+GenerateNodes := function(node, cutoff)
+  local orbits, orb, c, children, child, candidates, setstab;
+
+  ## return no children if less than 'cutoff' candidates
+  if Size(node.cands) < cutoff then return []; fi;
 
   children   := [];
   candidates := Set(node.cands);
 
-  ## no 'candidates', no 'children'
-  if IsEmpty(candidates) then return children; fi;
+  ## partition 'candidates' into 'orbits' via pointwise stabiliser
+  orbits := List(FiningOrbits(node.stab, candidates, OnProjSubspaces),
+                 orb -> Intersection(orb, candidates));
+#Print("\n|orbit|=", List(orbits, Size), "\n"); #DEBUG
 
-  ## partition candidates into orbits via stabiliser
-  if node.stab = [] then
+  ## if orbit not transitive refine 'node.stab' to setwise stabiliser
+  if Size(orbits) > 1 then
 
-    ## stabiliser already known to be trivial
-    orbits := List(candidates, c -> [c]);
-  else
-
-    ## partition 'candidates' into 'orbits' via pointwise stabiliser
+    ## compute setwise stabiliser and partition 'candidates' into 'orbits'
+    node.stab := FiningSetwiseStabiliser(CollineationGroup(node.ps), node.arc);
     orbits := List(FiningOrbits(node.stab, candidates, OnProjSubspaces),
                    orb -> Intersection(orb, candidates));
-    Sort(orbits, ByDescSize);
-Print("\n|orbit|=", List(orbits, Size), "\n"); #DEBUG
+#Print("\n|ORBIT|=", List(orbits, Size), "\n"); #DEBUG
+  fi;
 
-    ## if orbit not transitive try with setwise stabiliser
-    if Size(orbits) > 1 then
-
-      ## compute setwise stabiliser and partition 'candidates' into 'orbits'
-      stab2 := FiningSetwiseStabiliser(CollineationGroup(node.ps), node.arc);
-      orbits := List(FiningOrbits(stab2, candidates, OnProjSubspaces),
-                     orb -> Intersection(orb, candidates));
-      Sort(orbits, ByDescSize);
-Print("\n|ORBIT|=", List(orbits, Size), "\n"); #DEBUG
-
-      ## record setwise stabiliser unless it is trivial
-      if IsTrivial(stab2) then node.stab := []; else node.stab := stab2; fi;
-    fi;
+  ## return no children if stabiliser is trivial (and set 'node.stab')
+  if IsTrivial(node.stab) then
+    node.stab := [];
+    return [];
   fi;
 
   ## iterate over 'orbits', sorted by size (biggest orbit first)
+  Sort(orbits, ByDescSize);
   for orb in orbits do
 
     ## prune "to the right" if set of candidates too small to reach k-arc
     if Size(node.arc) + Size(candidates) < node.k then
+      return children;
+    fi;
+
+    ## stop generation if number of candidates drops below 'cutoff'
+    if Size(candidates) < cutoff then
+
+      ## adjust candidate set of current node
+      node.cands := candidates;
       return children;
     fi;
 
@@ -201,13 +215,9 @@ Print("\n|ORBIT|=", List(orbits, Size), "\n"); #DEBUG
     ## add child only if it has a chance of reaching a k-arc, else prune
     if Size(child.arc) + Size(child.cands) >= child.k then
 
-      ## adjust stab before adding 'child' (unless stab is already trivial)
-      if node.stab <> [] and not IsTrivial(node.stab) then
-        child.stab := FiningStabiliserOrb(node.stab, c);
-      fi;
-
+      ## adjust stab to a pointwise stabiliser before adding 'child'
+      child.stab := FiningStabiliserOrb(node.stab, c);
 #Print("\narc=", ToPos(child.pts, child.arc), "\n"); #DEBUG
-
       Add(children, child);
     fi;
 
@@ -220,67 +230,36 @@ Print("\n|ORBIT|=", List(orbits, Size), "\n"); #DEBUG
 end;;
 
 
-## Auxiliary function called by EnumerateArcs; returns nothing.
-AccumulateArcsFrom := function(node, i_accu, c_accu)
-  local child;
+## Auxiliary function called by EnumerateSearchTree; returns nothing.
+AccumulateSearchTreeFrom := function(cutoff, node, accu)
+  local children, child;
 
-  if Size(node.arc) = node.k then
-    if IsEmpty(node.cands) and IsCompleteArc(node.ps, node.arc) then
-      Add(c_accu, node.arc);
-Print("\nC ", ToPos(node.pts, node.arc), "\n");
-    else
-      Add(i_accu, node.arc);
-Print("\nI ", ToPos(node.pts, node.arc), "\n");
-    fi;
-    return;
-  fi;
+  ## generate children
+  children := GenerateNodes(node, cutoff);
 
-  ## recursive calls
-  for child in GenerateNodes(node) do
-    AccumulateArcsFrom(child, i_accu, c_accu);
-  od;
-end;;
-
-
-## Given a projective space 'ps' and a positive integer 'k', return a record
-## with lists of all incomplete and complete 'k'-arcs in 'ps'.
-EnumerateArcs := function(ps, k)
-  local incomplete_arcs, complete_arcs;
-
-  incomplete_arcs := [];
-  complete_arcs   := [];
-  AccumulateArcsFrom(RootNode(ps, k), incomplete_arcs, complete_arcs);
-  return rec( incomplete := incomplete_arcs, complete := complete_arcs );
-end;;
-
-
-## Auxiliary function called by EnumerateSearchTreeLevel; returns nothing.
-AccumulateSearchTreeLevelFrom := function(level, node, accu)
-  local child;
-
-  if Size(node.arc) = level then
+  ## termination: trivial stabiliser or fewer than 'cutoff' candidates
+  if node.stab = [] or Size(node.cands) < cutoff then
     Add(accu, node);
 Print("\narc=", ToPos(node.pts, node.arc)); #DEBUG
 Print("\t|cands|=", Size(node.cands));      #DEBUG
 Print("\t|stab|=", Size(node.stab), "\n");  #DEBUG
-    return;
   fi;
 
   ## recursive calls
-  for child in GenerateNodes(node) do
-    AccumulateSearchTreeLevelFrom(level, child, accu);
+  for child in children do
+    AccumulateSearchTreeFrom(cutoff, child, accu);
   od;
 end;;
 
 
 ## Given a projective space 'ps' a positive integer 'k' and a
-## non-negative integer 'level' <= 'k', return the list of search tree nodes
-## corresponding to 'level' in the tree (i.e. arc is of size 'level').
-EnumerateSearchTreeLevel := function(ps, k, level)
+## non-negative integer 'cutoff', return the frontier of search tree nodes
+## such that the size of field 'cands' is less than 'cutoff'.
+EnumerateSearchTree := function(ps, k, cutoff)
   local nodes, node;
 
   nodes := [];
-  AccumulateSearchTreeLevelFrom(level, RootNode(ps, k), nodes);
+  AccumulateSearchTreeFrom(cutoff, RootNode(ps, k), nodes);
 
   ## recompute setwise stabilisers
   for node in nodes do
@@ -292,8 +271,8 @@ EnumerateSearchTreeLevel := function(ps, k, level)
     fi;
   od;
 
-  ## sort nodes in descending order of size of node.cands
-  Sort(nodes, ByDescCandsSize);
+  ## sort nodes in descending order of size of field 'cands'
+  Sort(nodes, ByDescCandsAscArc);
 
   return nodes;
 end;;
@@ -302,12 +281,11 @@ end;;
 ## Given a non-empty list 'nodes' of search tree nodes corresponding
 ## to one level of the tree, print arcs and candidates to 'file'.
 PrintSearchTreeNodes := function(nodes, file)
-  local out, space, points, k, l, node, a, c, i;
+  local out, space, points, k, node, a, c, i;
 
   space  := nodes[1].ps;
   points := nodes[1].pts;
   k      := nodes[1].k;
-  l      := Size(nodes[1].arc);
 
   if IsEmpty(file) then
     out := OutputTextUser();
@@ -315,7 +293,7 @@ PrintSearchTreeNodes := function(nodes, file)
     out := OutputTextFile(file, false);
   fi;
 
-  AppendTo(out, "c ", l, "-arc roots for all ", k, "-arcs in ", space, "\n");
+  AppendTo(out, "c root arcs for all ", k, "-arcs in ", space, "\n");
 
   i := 0;
   for node in nodes do
@@ -324,6 +302,7 @@ PrintSearchTreeNodes := function(nodes, file)
 
     # write comment (root #, size of stabiliser, number of candidates)
     AppendTo(out, "c #", i);
+    AppendTo(out, " |arc|=", Size(node.arc));
     AppendTo(out, " |stab|=", Size(node.stab));
     AppendTo(out, " |candidates|=", Size(node.cands), "\n");
 
@@ -346,21 +325,23 @@ PrintSearchTreeNodes := function(nodes, file)
 end;;
 
 
-## Generating 5-arcs as roots for (q-1)-arcs in PG(2,q), 7 <= q <= 83.
+## Generating roots for (q-1)-arcs in PG(2,q), 7 <= q <= 83, cutoff 400.
 ## NB: Cannot do q=p^2 because prime squares trigger a bug in SetwiseStabiliser.
+cutoff := 400;
 ps := Filtered(Primes, p -> p <= 83);
 qs := Concatenation(List([1, 3, 4, 5, 6], i ->
         Filtered(List(ps, p -> p^i), q -> 7 <= q and q <= 83)));
 Sort(qs);
 #for q in qs do
-#  file := Concatenation("PG_2_", String(q), "_level5.txt");
+#  file := Concatenation("PG_2_", String(q), "_cutoff", String(cutoff), ".txt");
 #  t0 := Runtime();;
-#  nodes := EnumerateSearchTreeLevel(PG(2,q), q - 1, 5);;
-#  PrintSearchTreeNodes(nodes, file);
+#  nodes := EnumerateSearchTree(PG(2,q), q - 1, cutoff);;
 #  t1 := Runtime();;
-#  Print("\nq=", q, " |level5| = ", Length(nodes), " {", t1 - t0, "ms}");
-#  Print("\nq=", q, " |stab_level5| = ", List(nodes, node -> Size(node.stab)));
-#  Print("\n\n");
+#  Print("\nq=", q, " roots = ", Length(nodes), " {", t1 - t0, "ms}");
+#  Print("\nq=", q, " |arc| = ", Set(nodes, node -> Size(node.arc)));
+#  Print("\nq=", q, " |stab| = ", Set(nodes, node -> Size(node.stab)), "\n");
+#  PrintSearchTreeNodes(nodes, file);
+#  Print("\n");
 #od;
 
 
