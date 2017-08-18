@@ -486,7 +486,6 @@ main = do
   (conf, seed, args) <- parseOpts opts_args
   initrand seed
   -- parsing command line arguments (no real error checking)
-  args <- getArgs
   let (ver, sfile, k, rfile, root, seqsz) = parseArgs args
   putStrLn $ "arcs" ++ dispVersion ver ++ dispSpaceFile sfile ++ dispK k ++
              dispRootsFile rfile ++ dispRoot root ++
