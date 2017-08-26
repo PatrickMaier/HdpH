@@ -1,6 +1,7 @@
 ##
 ## Enumerating arcs in PG(2,q), with orbital symmetry breaking and search tree
-## cutoff based on size of candidates set, or when stabiliser is trivial.
+## cutoff based on size of candidates set and size of arcs, or when stabiliser
+## is trivial.
 ##
 ## Refers to Open Problem 4.10(f) in
 ##   Hirschfeld, Thas. Open Problems in Finite Projective Spaces. 2015.
@@ -82,7 +83,7 @@ IsNode := function(r)
 
   ## check field types
   if not IsProjectiveSpace(r.ps) then return false; fi;
-  if not IsPostiveIntegers(r.k) then return false; fi;
+  if not IsPositiveIntegers(r.k) then return false; fi;
   if not (IsSet(r.arc) and IsMutable(r.arc)) then return false; fi;
   if not (IsSet(r.cands) and IsMutable(r.cands)) then return false; fi;
   if not (IsGroup(r.stab)) then return false; fi;
@@ -104,13 +105,16 @@ IsNode := function(r)
 end;;
 
 
-# Comparison function for sorting nodes by size of 'cands' in descending order,
-# in case of a tie by size of 'arc' in ascending order.
-ByDescCandsAscArc := function(x, y)
-  if Size(x.cands) = Size(y.cands) then
-    return Size(x.arc) < Size(y.arc);
+# Comparison function for sorting nodes by size of 'arc' in descending order,
+# in case of a tie by size of 'cands' in ascending order, and
+# in case of a further tie by size of 'stab' in descending order.
+By_DescArc_AscCands_DescStab := function(x, y)
+  if Size(x.arc) = Size(y.arc) and Size(x.cands) = Size(y.cands) then
+    return Size(x.stab) > Size(y.stab);
+  elif Size(x.arc) = Size(y.arc) then
+    return Size(x.cands) < Size(y.cands);
   else
-    return Size(x.cands) > Size(y.cands);
+    return Size(x.arc) > Size(y.arc);
   fi;
 end;;
 
@@ -168,19 +172,29 @@ end;;
 
 ## Given a search tree node 'parent', return a list of children of 'parent'
 ## in the search tree when enumerating the 'parent.k'-arcs.
-## 'cutoff' is a lower bound on the number of candidates; the function stops
-## generating children as soon as the number candidates drops below 'cutoff'.
+## 'cutoff' and 'delta' determine a lower bound on the number of candidates;
+## the function stops generating children as soon as the number candidates
+## drops below 'cutoff + Size(parent.arc) * delta'.
 ## Assumes that 'parent.stab' is the non-trivial setwise stabiliser of
-## 'parent.arc' and stops as soon as 'parent.stab' becomes trivial.
-GenerateNodes := function(parent, cutoff)
+## 'parent.arc'; if flag 'triv_stop' is true then expansion stops as soon as
+## 'parent.stab' becomes trivial.
+GenerateNodes := function(parent, cutoff, delta, triv_stop)
   local orbits, orb, orb1, c, arc, stab,
         prechildren, prechild, children, child, candidates;
 
-  ## return no children if stabiliser trivial or fewer than 'cutoff' candidates
-  ## or arc is already of size k
-  if IsTrivial(parent.stab) or
-     Size(parent.cands) < cutoff or
-     Size(parent.arc) = parent.k
+  ## return no children if target arc size is reached
+  if Size(parent.arc) >= parent.k then
+    return [];
+  fi;
+
+  ## return no children if stabiliser is trivial (and triv_stop flag is true)
+  if Size(parent.arc) >= 4 and triv_stop and IsTrivial(parent.stab) then
+    return [];
+  fi;
+
+  ## return no children if number of candidates falls below threshold
+  if Size(parent.arc) >= 4 and
+     Size(parent.cands) < cutoff + Size(parent.arc) * delta
   then
     return [];
   fi;
@@ -233,8 +247,9 @@ GenerateNodes := function(parent, cutoff)
     fi;
 
     ## stop generation if number of candidates drops below 'cutoff'
-    if Size(candidates) < cutoff then
-
+    if Size(parent.arc) >= 4 and
+       Size(candidates) < cutoff + Size(parent.arc) * delta
+    then
       ## adjust candidate set of current node
       parent.cands := candidates;
       return children;
@@ -267,14 +282,14 @@ end;;
 
 
 ## Auxiliary function called by EnumerateSearchTree; returns nothing.
-AccumulateSearchTreeFrom := function(cutoff, node, accu)
+AccumulateSearchTreeFrom := function(cutoff, delta, triv_stop, node, accu)
   local children, child;
 
   ## generate children
-  children := GenerateNodes(node, cutoff);
+  children := GenerateNodes(node, cutoff, delta, triv_stop);
 
-  ## termination: trivial stabiliser or fewer than 'cutoff' candidates
-  if IsTrivial(node.stab) or Size(node.cands) < cutoff then
+  ## no children: add frontier node
+  if IsEmpty(children) then
     Add(accu, node);
 Print("\narc=", ToPos(node.pts, node.arc)); #DEBUG
 Print("\t|cands|=", Size(node.cands));      #DEBUG
@@ -283,31 +298,35 @@ Print("\t|stab|=", Size(node.stab), "\n");  #DEBUG
 
   ## recursive calls
   for child in children do
-    AccumulateSearchTreeFrom(cutoff, child, accu);
+    AccumulateSearchTreeFrom(cutoff, delta, triv_stop, child, accu);
   od;
 end;;
 
 
-## Given a projective space 'ps' a positive integer 'k' and a
-## non-negative integer 'cutoff', return the frontier of search tree nodes
-## such that the size of field 'cands' is less than 'cutoff'.
-EnumerateSearchTree := function(ps, k, cutoff)
+## Given a projective space 'ps' a positive integer 'k',
+## non-negative integers 'cutoff' and 'delta' and a flag 'triv_stop',
+## return the frontier of search tree nodes such that the size of field
+## 'cands' is bounded by a threshold determined by 'cutoff', 'delta',
+## the size of the current arc and the size of its stabiliser.
+EnumerateSearchTree := function(ps, k, cutoff, delta, triv_stop)
   local nodes, node;
 
   nodes := [];
-  AccumulateSearchTreeFrom(cutoff, RootNode(ps, k), nodes);
+  AccumulateSearchTreeFrom(cutoff, delta, triv_stop, RootNode(ps, k), nodes);
 
-  ## sort nodes in descending order of size of field 'cands'
-  Sort(nodes, ByDescCandsAscArc);
+  # sort nodes (by size of 'arc', 'cands', and 'stab' fields)
+  Sort(nodes, By_DescArc_AscCands_DescStab);
 
   return nodes;
 end;;
 
 
 ## Given a non-empty list 'nodes' of search tree nodes corresponding
-## to one level of the tree, print arcs and candidates to 'file'.
+## to a frontier of the tree, print arcs and candidates to 'file'.
 PrintSearchTreeNodes := function(nodes, file)
   local out, space, points, k, node, a, c, i;
+
+  if IsEmpty(nodes) then return; fi;
 
   space  := nodes[1].ps;
   points := nodes[1].pts;
@@ -319,7 +338,7 @@ PrintSearchTreeNodes := function(nodes, file)
     out := OutputTextFile(file, false);
   fi;
 
-  AppendTo(out, "c ArcsSBcutoff2\n");
+  AppendTo(out, "c ArcsSBcutoff3\n");
   AppendTo(out, "c root arcs for all ", k, "-arcs in ", space, "\n");
 
   i := 0;
@@ -352,17 +371,20 @@ PrintSearchTreeNodes := function(nodes, file)
 end;;
 
 
-## Generating roots for (q-1)-arcs in PG(2,q), 7 <= q <= 83, cutoff 400.
+## Generating roots for (q-1)-arcs in PG(2,q), 7 <= q <= 83.
 ## NB: Cannot do q=p^2 because prime squares trigger a bug in SetwiseStabiliser.
-cutoff := 400;
+cutoff := 100;
+delta := 50;
+stop := true;
 ps := Filtered(Primes, p -> p <= 83);
 qs := Concatenation(List([1, 3, 4, 5, 6], i ->
         Filtered(List(ps, p -> p^i), q -> 7 <= q and q <= 83)));
 Sort(qs);
 #for q in qs do
-#  file := Concatenation("PG_2_", String(q), "_cutoff", String(cutoff), ".txt");
+#  file := Concatenation("PG_2_", String(q),
+#            "_cutoff", String(cutoff), "_delta", String(delta), "_stop.txt");
 #  t0 := Runtime();;
-#  nodes := EnumerateSearchTree(PG(2,q), q - 1, cutoff);;
+#  nodes := EnumerateSearchTree(PG(2,q), q - 1, cutoff, delta, stop);;
 #  t1 := Runtime();;
 #  Print("\nq=", q, " roots = ", Length(nodes), " {", t1 - t0, "ms}");
 #  Print("\nq=", q, " |arc| = ", Set(nodes, node -> Size(node.arc)));
