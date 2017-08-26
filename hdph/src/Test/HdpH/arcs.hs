@@ -1,5 +1,8 @@
--- Enumerating arcs in PG(2,q), without symmetry breaking.
+-- Counting complete k-arcs in PG(2,q), without symmetry breaking.
 -- Refers to Open Problem 4.10(f) in [1].
+--
+-- Args:    -space=SPACEFILE -lLOWER -uUPPER  ## where 3 <= LOWER <= k <= UPPER
+-- OptArgs: [V0|V1] [-roots=ROOTSFILE] [-rROOT] [-sSEQUENTIALSIZE]
 --
 -- Author: Patrick Maier
 --
@@ -15,12 +18,13 @@
 module Main where
 
 import Prelude hiding (lines, span)
-import Control.DeepSeq (NFData(rnf), ($!!))
+import Control.DeepSeq (NFData(rnf), ($!!), force)
 import Control.Exception (evaluate)
 import Control.Monad (when, zipWithM_)
 import qualified Data.IntSet as Set
 import Data.IORef (IORef, newIORef, atomicWriteIORef, readIORef)
-import Data.List (foldl', isPrefixOf, stripPrefix)
+import Data.List
+       (foldl', group, isPrefixOf, partition, sort, stripPrefix, tails)
 import qualified Data.List as List (lines)
 import Data.Maybe (fromJust)
 import Data.Time.Clock (NominalDiffTime, diffUTCTime, getCurrentTime)
@@ -59,55 +63,159 @@ getSpace = io $ readIORef spaceRef
 
 
 ---------------------------------------------------------------------------
--- sets of points represented as IntSets
+-- unsigned integer histograms
 
-type SetOfPoint = Set.IntSet
+type Hist = [Int]
 
-toAscListP :: SetOfPoint -> [Point]
-toAscListP = map toEnum . Set.toAscList
+-- empty histogram
+emptyHist :: Hist
+emptyHist = []
 
-fromListP :: [Point] -> SetOfPoint
-fromListP = Set.fromList . map fromEnum
+-- push zero to histogram
+pushZeroHist :: Hist -> Hist
+pushZeroHist hist = 0:hist
 
--- fromAscListP :: [Point] -> SetOfPoint
--- fromAscListP = Set.fromAscList . map fromEnum
+-- push one to histogram
+pushOneHist :: Hist -> Hist
+pushOneHist hist = 1:hist
 
-nullP :: SetOfPoint -> Bool
-nullP = Set.null
+-- zero histogram of given length
+zeroHist :: Int -> Hist
+zeroHist n = replicate n 0
 
-sizeP :: SetOfPoint -> Int
-sizeP = Set.size
+-- histogram with `1` at the `n`-th position, `0` in leading positions.
+oneHist :: Int -> Hist
+oneHist n = zeroHist n ++ [1]
 
-memberP :: Point -> SetOfPoint -> Bool
-memberP a = Set.member (fromEnum a)
+-- addition of two histograms
+(|+|) :: Hist -> Hist -> Hist
+xs     |+| []     = xs
+[]     |+| ys     = ys
+(x:xs) |+| (y:ys) = z:zs where { !z = x + y; !zs = xs |+| ys }
 
-notMemberP :: Point -> SetOfPoint -> Bool
-notMemberP a = Set.notMember (fromEnum a)
-
-emptyP :: SetOfPoint
-emptyP = Set.empty
-
-insertP :: Point -> SetOfPoint -> SetOfPoint
-insertP a = Set.insert (fromEnum a)
-
-deleteP :: Point -> SetOfPoint -> SetOfPoint
-deleteP a = Set.delete (fromEnum a)
-
--- intersectionP :: SetOfPoint -> SetOfPoint -> SetOfPoint
--- intersectionP = Set.intersection
-
--- unionP :: SetOfPoint -> SetOfPoint -> SetOfPoint
--- unionP = Set.union
-
--- differenceP :: SetOfPoint -> SetOfPoint -> SetOfPoint
--- differenceP = Set.difference
+-- totaling of a histogram
+totalHist :: Hist -> Int
+totalHist = sum
 
 
 ---------------------------------------------------------------------------
--- predicates about arcs
+-- sets of points represented as lists in strict ascending order
+
+type SetOfPoint = [Point]
+
+isSetOfPoint :: SetOfPoint -> Bool
+isSetOfPoint = go where
+  go (a:bs@(b:_)) = a < b && go bs
+  go _            = True
+
+-- Complexity of sorting
+fromListP :: [Point] -> SetOfPoint
+fromListP = fromAscListP . map head . group . sort
+
+-- Constant complexity; unsafe (assumes list is already strictly sorted)
+fromAscListP :: [Point] -> SetOfPoint
+fromAscListP = id
+
+-- Constant complexity
+toAscListP :: SetOfPoint -> [Point]
+toAscListP = id
+
+-- Linear complexity
+sizeP :: SetOfPoint -> Int
+sizeP = length
+
+-- Constant complexity
+nullP :: SetOfPoint -> Bool
+nullP = null
+
+-- Linear complexity
+memberP :: Point -> SetOfPoint -> Bool
+memberP b = go where
+  go (a:as) = if a < b then go as else a == b
+  go []     = False
+
+-- Linear complexity
+subsetP :: SetOfPoint -> SetOfPoint -> Bool
+subsetP []         _       = True
+subsetP _          []      = False
+subsetP as@(a:as') (b:bs') | a > b     = subsetP as bs'
+                           | otherwise = a == b && subsetP as' bs'
+
+-- Linear complexity
+disjointP :: SetOfPoint -> SetOfPoint -> Bool
+disjointP []         _          = True
+disjointP _          []         = True
+disjointP as@(a:as') bs@(b:bs') | a < b     = disjointP as' bs
+                                | a > b     = disjointP as  bs'
+                                | otherwise = False
+
+-- Constant complexity
+emptyP :: SetOfPoint
+emptyP = []
+
+-- Constant complexity
+singletonP :: Point -> SetOfPoint
+singletonP a = [a]
+
+-- Constant complexity
+pairP :: Point -> Point -> SetOfPoint
+pairP a b | a < b     = [a,b]
+          | b < a     = [b,a]
+          | otherwise = [a]
+
+-- Linear complexity
+insertP :: Point -> SetOfPoint -> SetOfPoint
+insertP b as = unionP as [b]
+
+-- Linear complexity
+deleteP :: Point -> SetOfPoint -> SetOfPoint
+deleteP b as = differenceP as [b]
+
+-- Linear complexity
+unionP :: SetOfPoint -> SetOfPoint -> SetOfPoint
+unionP []         bs         = bs
+unionP as         []         = as
+unionP as@(a:as') bs@(b:bs') | a < b     = a : unionP as' bs
+                             | a > b     = b : unionP as  bs'
+                             | otherwise = a : unionP as' bs'
+
+-- Linear complexity
+intersectionP :: SetOfPoint -> SetOfPoint -> SetOfPoint
+intersectionP []         _          = []
+intersectionP _          []         = []
+intersectionP as@(a:as') bs@(b:bs') | a < b     = intersectionP as' bs
+                                    | a > b     = intersectionP as  bs'
+                                    | otherwise = a : intersectionP as' bs'
+
+-- Linear complexity
+differenceP :: SetOfPoint -> SetOfPoint -> SetOfPoint
+differenceP []         _          = []
+differenceP as         []         = as
+differenceP as@(a:as') bs@(b:bs') | a < b     = a : differenceP as' bs
+                                  | a > b     = differenceP as  bs'
+                                  | otherwise = differenceP as' bs
+
+-- Linear complexity
+tailsP :: SetOfPoint -> [SetOfPoint]
+tailsP = tails
+
+-- Linear complexity (times complexity of filter predicate)
+filterP :: (Point -> Bool) -> SetOfPoint -> SetOfPoint
+filterP p = go where
+  go []     = []
+  go (a:as) | p a       = a : go as
+            | otherwise = go as
+
+-- Linear complexity (times complexity of partitioning predicate)
+partitionP :: (Point -> Bool) -> SetOfPoint -> (SetOfPoint, SetOfPoint)
+partitionP = partition
+
+
+---------------------------------------------------------------------------
+-- completeness test for arcs
 
 -- Given an arc 'arc' and a 'c' not in 'arc', return 'True' iff 'arc'
--- can be extended with 'c' (i.e. 'arc `union` {b}' is still an arc);
+-- can not be extended with 'c' (i.e. 'c:arc' is no arc);
 -- 'as' is a set representation of the points in 'arc'.
 isNoCandidateForArc :: Space -> [Point] -> SetOfPoint -> Point -> Bool
 isNoCandidateForArc sp arc as c =
@@ -119,11 +227,33 @@ isNoCandidateForArc sp arc as c =
      --       however, this appears to result in less efficient code.
 
 
--- Return 'True' iff arc 'arc' is complete (i.e. maximal wrt set inclusion).
-isCompleteArc :: Space -> [Point] -> Bool
-isCompleteArc sp arc =
-  and [isNoCandidateForArc sp arc as c | c <- points sp, c `notMemberP` as]
+-- Return 'True' iff arc 'arc' is complete (i.e. maximal wrt set inclusion)
+-- when tested against list of rejected points `xs`.
+isCompleteArc :: Space -> [Point] -> [Point] -> Bool
+isCompleteArc sp arc xs =
+  and [isNoCandidateForArc sp arc as c | c <- xs]
     where as = fromListP arc
+
+
+---------------------------------------------------------------------------
+-- candidates for extension of arcs
+
+-- Given an arc `b:arc` and a set of candidates `cs` for extending point `arc`,
+-- shrink `cs` such that the resulting set are the candidates for extending
+-- `b:arc`. Note that `b` may be an element of `cs`
+shrinkCandidates :: Space -> [Point] -> SetOfPoint -> SetOfPoint
+shrinkCandidates sp [b]     cs = deleteP b cs
+shrinkCandidates sp (b:arc) cs =
+  -- remove all points on 2-secants thru `b` and some point `a` in `arc`
+  foldl differenceP cs
+  [fromAscListP $ elemsSet $ pointsOf sp $ fromJust $ span sp a b | a <- arc]
+
+
+-- Given an `arc`, return the set of all candidates for extending `arc`.
+candidates :: Space -> SetOfPoint -> SetOfPoint
+candidates sp arc = snd $ foldr f ([], fromListP $ points sp) arc
+  where
+    f b (arc, cs) = (b:arc, shrinkCandidates sp (b:arc) cs)
 
 
 ---------------------------------------------------------------------------
@@ -131,136 +261,103 @@ isCompleteArc sp arc =
 
 -- Search tree node
 data Node = Node {
-              k           :: !Int,        -- target arc size
-              arc         :: ![Point],    -- current arc
-              nArc        :: !Int,        -- size of current arc
-              candidates  :: !SetOfPoint, -- candidates for extension of arc
-              bound       :: !Int }       -- upper bound on arc of candidates
+              k_min  :: !Int,        -- lower bound on target arc size
+              k_max  :: !Int,        -- upper bound on target arc size
+              arc    :: ![Point],    -- current arc
+              nArc   :: !Int,        -- size of current arc
+              cand   :: SetOfPoint,  -- candidates for extension of arc
+              nCand  :: !Int,        -- size of current candidate set
+              reject :: [Point] }    -- list of rejected candidates
               deriving (Generic)
 
 instance Serialize Node
 
 instance NFData Node where
-  rnf node = rnf (k node) `seq`
+  rnf node = rnf (k_min node) `seq` rnf (k_max node) `seq`
              rnf (arc node) `seq` rnf (nArc node) `seq`
-             rnf (candidates node) `seq` rnf (bound node) `seq` ()
-
-
--- 'True' iff node represents a k-arc
-final :: Node -> Bool
-final node = nArc node == k node
+             rnf (cand node) `seq` rnf (nCand node) `seq`
+             rnf (reject node) `seq` ()
 
 
 -- 'True' iff node can possibly be extended to a k-arc
 feasible :: Node -> Bool
-feasible node = nArc node + bound node >= k node
+feasible node = nArc node + nCand node >= k_min node
 
 
 -- Generate root node of the search tree
-mkRoot :: Space -> Int -> Maybe ([Point], SetOfPoint) -> Node
-mkRoot sp desired_k maybe_root = let
-    node0 = Node { k = desired_k, arc = [], nArc = 0,
-                   candidates = emptyP, bound = 0 }
-  in case maybe_root of
-       Nothing      -> node0 { candidates = fromListP $ points sp,
-                               bound = length $ points sp }
-       Just (as,cs) -> node0 { arc = reverse as, nArc = length as,
-                               candidates = cs, bound = sizeP cs }
-
-
--- Note: `c` is not in `cands` and not in `arc`.
-shrinkCandsOnExtArc :: Space -> [Point] -> Point -> SetOfPoint -> SetOfPoint
-shrinkCandsOnExtArc sp arc c cands =
-  -- remove all points `b` on lines thru `c` and some point `a` in `arc`
-  foldl' (flip deleteP) cands
-  [b | a <- arc, b <- elemsSet $ pointsOf sp $ fromJust $ span sp c a]
-  -- NOTE: Could shorten list by adding filters `b /= a` and `b /= c`;
-  --       however, this results in less efficient code.
+mkRoot :: Space -> Lower -> Upper -> Maybe ([Point], SetOfPoint) -> Node
+mkRoot sp lower upper maybe_root =
+  case maybe_root of
+    Just (as, cs) -> Node {
+                       k_min = lower, k_max = upper,
+                       arc = reverse as, nArc = length as,
+                       cand = cs, nCand = sizeP cs,
+                       reject = toAscListP $ differenceP (candidates sp as) cs }
+    Nothing       -> mkRoot sp lower upper $ Just ([], candidates sp [])
 
 
 generate :: Space -> Node -> [Node]
-generate space parent =
-  concat $ zipWith mkFeasibleNode (take (n_cs - k parent + n_as + 1) cs) cands
-  -- NOTE: Dropping last `gap` candidates because remaining candidate sets would
-  --       have less than `gap` elements, where `gap = k parent - (n_as + 1)`.
-    where
-      as    = arc parent
-      n_as  = nArc parent
-      cs    = toAscListP $ candidates parent
-      n_cs  = sizeP $ candidates parent
-      cands = tail $ scanr insertP emptyP cs
-      mkFeasibleNode :: Point -> SetOfPoint -> [Node]
-      mkFeasibleNode c cands =
-        if feasible child then [child] else []
-          where
-            cands' = shrinkCandsOnExtArc space as c cands
-            child = parent { arc  = c:as,
-                             nArc = n_as + 1,
-                             candidates = cands',
-                             bound = sizeP cands' }
-
-
--- Returns number of complete (1st component) and incomplete (2nd component)
--- 'k'-arcs below node 'current', and the call/depth histogram (3rd component).
-countArcs :: Space -> Node -> (Int, Int)
-countArcs space current =
-  if final current
-    then if complete then (1,0) else (0,1)
-    else reduce $ map (countArcs space) $ generate space current
+generate space this
+  | k >= k_max this   = []  -- termination: max depth
+  | nullP (cand this) = []  -- termination: no alternatives left
+  | otherwise         = filter feasible $ children (reject this) cs (cand this)
+  where
+    k = nArc this
+    gap = k_min this - (k + 1)
+    cs  = take (nCand this - gap) $ toAscListP $ cand this
+          -- NOTE: Can drop up to `gap` candidates at the end because candidate
+          -- sets would have fewer than `gap` elts, so `k_min` is not reachable.
+    children :: [Point] -> [Point] -> SetOfPoint -> [Node]
+    children _  []     _     = []
+    children xs (c:cs) cands = child : children (c:xs) cs (deleteP c cands)
       where
-        complete = nullP (candidates current) &&
-                   isCompleteArc space (arc current)
-        reduce :: [(Int, Int)] -> (Int, Int)
-        reduce xys = go 0 0 xys
-          where
-            go !s1 !s2 ((x,y):xys) = go (s1 + x) (s2 + y) xys
-            go !s1 !s2 []          = (s1, s2)
+        arc'   = c : arc this
+        cands' = shrinkCandidates space arc' cands
+        child = this { arc  = arc',
+                       nArc = nArc this + 1,
+                       cand  = cands',
+                       nCand = sizeP cands',
+                       reject = xs }
+
+
+-- Returns histogram of complete k-arcs, k_min <= k <= k_max, below `current`
+countArcs :: Space -> Node -> Hist
+countArcs space current =
+  add1 $! foldl' (|+|) zero $ map (countArcs space) $ generate space current
+    where
+      is_complete_k_arc = k_min current <= nArc current &&
+                          nArc current <= k_max current &&
+                          nullP (cand current) &&
+                          isCompleteArc space (arc current) (reject current)
+      zero = zeroHist (k_max current - k_min current + 1)
+      add1 h | is_complete_k_arc = h |+| oneHist (nArc current - k_min current)
+             | otherwise         = h
 
 
 ---------------------------------------------------------------------------
 -- parallel algorithm, direct implementation
 
--- unsigned integer histograms
-type UIntHist = [Int]
-
--- addition of two histograms
-(|+|) :: UIntHist -> UIntHist -> UIntHist
-xs     |+| []     = xs
-[]     |+| ys     = ys
-(x:xs) |+| (y:ys) = z:zs where { !z = x + y; !zs = xs |+| ys }
-
--- totaling of histogram
-totalHist :: UIntHist -> Int
-totalHist = sum
-
--- empty histogram
-emptyHist :: UIntHist
-emptyHist = []
-
--- push zero to histogram
-push0Hist :: UIntHist -> UIntHist
-push0Hist hist = 0:hist
-
--- push one to histogram
-push1Hist :: UIntHist -> UIntHist
-push1Hist hist = 1:hist
-
-
-data Result = Result !Int !Int !Int !UIntHist deriving (Generic)
+data Result = Result
+                !Hist  -- k-histogram of complete k-arcs
+                !Hist  -- depth-histogram of tasks spawned
+                !Int   -- total number of sequential tasks
+                deriving (Generic)
 
 instance Serialize Result
 
 instance NFData Result where
-  rnf (Result complete incomplete seq_tasks spawn_hist) = rnf spawn_hist
+  rnf (Result arc_hist spawn_hist seq_tasks) =
+    rnf arc_hist `seq` rnf spawn_hist `seq` rnf seq_tasks `seq` ()
 
+
+-- Reduce a non-empty list of results
 reduceResults :: [Result] -> Result
-reduceResults results =
-  go 0 0 0 emptyHist results
-    where
-      go !s1 !s2 !s3 !h1 results =
-        case results of
-          (Result x y z h):rest -> go (s1 + x) (s2 + y) (s3 + z) (h1 |+| h) rest
-          []                    -> Result s1 s2 s3 (push1Hist h1)
+reduceResults ((Result x y z):results) = go x y z results where
+  go !x' !y' !z' results =
+    case results of
+      (Result x y z):rest -> go (x' |+| x) (y' |+| y) (z' + z) rest
+      []                  -> Result x' (pushOneHist y') z'
+
 
 toClosureResult :: Result -> Closure Result
 toClosureResult result = $(mkClosure [| toClosureResult_abs result |])
@@ -272,13 +369,16 @@ toClosureResult_abs result = Thunk result
 countArcsPar :: SeqSize -> Node -> Par Result
 countArcsPar seqsz current = do
   space <- getSpace
-  if bound current <= seqsz || final current
-    then let (complete, incomplete) = countArcs space current in
-         return $! Result complete incomplete 1 (push1Hist emptyHist)
+  let k = nArc current
+  let children = generate space current
+  if nCand current <= seqsz || k >= k_min current || null children
+    then -- NOTE: Parallel algorithm falls back on sequential as soon as
+         --       it could detect a complete arc of target size.
+         let !arc_hist = force $ countArcs space current in
+         return $! Result arc_hist (pushOneHist emptyHist) 1
     else do
-      let tasks = [$(mkClosure [| countArcsPar_abs (seqsz, child) |])
-                    | child <- generate space current]
-      vs <- mapM (spawn one) tasks
+      let mkTask child = $(mkClosure [| countArcsPar_abs (seqsz, child) |])
+      vs <- mapM (spawn one) [mkTask child | child <- children]
       result <- reduceResults . map unClosure <$> mapM get vs
       return $! result
 
@@ -343,17 +443,30 @@ parseSpaceFile s | isPrefixOf "-space=" s = Just $ drop (length "-space=") s
                  | otherwise              = Nothing
 
 
--- Option: target arc size; default: 0
-type K = Int
+-- Option: lower bound on target arc size; default: 0
+type Lower = Int
 
-dispK :: K -> String
-dispK k = " -k" ++ show k
+dispLower :: Lower -> String
+dispLower k = " -l" ++ show k
 
-parseK :: String -> Maybe K
-parseK s | isPrefixOf "-k" s = case reads $ drop (length "-k") s of
-                                 [(k, "")] -> Just k
-                                 _         -> Nothing
-         | otherwise         = Nothing
+parseLower :: String -> Maybe Lower
+parseLower s | isPrefixOf "-l" s = case reads $ drop (length "-l") s of
+                                     [(k, "")] -> Just k
+                                     _         -> Nothing
+             | otherwise         = Nothing
+
+
+-- Option: upper bound on target arc size; default: 0
+type Upper = Int
+
+dispUpper :: Upper -> String
+dispUpper k = " -u" ++ show k
+
+parseUpper :: String -> Maybe Upper
+parseUpper s | isPrefixOf "-u" s = case reads $ drop (length "-u") s of
+                                     [(k, "")] -> Just k
+                                     _         -> Nothing
+             | otherwise         = Nothing
 
 
 -- Option: file with arcs and candidates for root node; default: "" (no file)
@@ -368,7 +481,7 @@ parseRootsFile s | isPrefixOf "-roots=" s = Just $ drop (length "-roots=") s
                  | otherwise              = Nothing
 
 
--- Option: root selection, pos int; default: -1 (select last root)
+-- Option: root selection, pos int; default: 1 (select first root)
 type Root = Int
 
 dispRoot :: Root -> String
@@ -395,40 +508,45 @@ parseSeqSize s | isPrefixOf "-s" s = case reads $ drop (length "-s") s of
                | otherwise         = Nothing
 
 
-parseArgs :: [String] -> (Version, SpaceFile, K, RootsFile, Root, SeqSize)
-parseArgs = foldl parse (V0, "", 0, "", -1, 0)
+parseArgs :: [String]
+          -> (Version, SpaceFile, Lower, Upper, RootsFile, Root, SeqSize)
+parseArgs = foldl parse (V0, "", 0, 0, "", 1, 0)
   where
-    parse (ver, sfile, k, rfile, root, seqsz) s =
+    parse (ver, sfile, lower, upper, rfile, root, seqsz) s =
       maybe id upd1a (parseVersion s) $
       maybe id upd1b (parseSpaceFile s) $
-      maybe id upd1c (parseK s) $
-      maybe id upd1d (parseRootsFile s) $
-      maybe id upd1e (parseRoot s) $
-      maybe id upd1f (parseSeqSize s) $
-      (ver, sfile, k, rfile, root, seqsz)
-    upd1a z (ya,yb,yc,yd,ye,yf) = ( z,yb,yc,yd,ye,yf)
-    upd1b z (ya,yb,yc,yd,ye,yf) = (ya, z,yc,yd,ye,yf)
-    upd1c z (ya,yb,yc,yd,ye,yf) = (ya,yb, z,yd,ye,yf)
-    upd1d z (ya,yb,yc,yd,ye,yf) = (ya,yb,yc, z,ye,yf)
-    upd1e z (ya,yb,yc,yd,ye,yf) = (ya,yb,yc,yd, z,yf)
-    upd1f z (ya,yb,yc,yd,ye,yf) = (ya,yb,yc,yd,ye, z)
+      maybe id upd1c (parseLower s) $
+      maybe id upd1d (parseUpper s) $
+      maybe id upd1e (parseRootsFile s) $
+      maybe id upd1f (parseRoot s) $
+      maybe id upd1g (parseSeqSize s) $
+      (ver, sfile, lower, upper, rfile, root, seqsz)
+    upd1a z (ya,yb,yc,yd,ye,yf,yg) = ( z,yb,yc,yd,ye,yf,yg)
+    upd1b z (ya,yb,yc,yd,ye,yf,yg) = (ya, z,yc,yd,ye,yf,yg)
+    upd1c z (ya,yb,yc,yd,ye,yf,yg) = (ya,yb, z,yd,ye,yf,yg)
+    upd1d z (ya,yb,yc,yd,ye,yf,yg) = (ya,yb,yc, z,ye,yf,yg)
+    upd1e z (ya,yb,yc,yd,ye,yf,yg) = (ya,yb,yc,yd, z,yf,yg)
+    upd1f z (ya,yb,yc,yd,ye,yf,yg) = (ya,yb,yc,yd,ye, z,yg)
+    upd1g z (ya,yb,yc,yd,ye,yf,yg) = (ya,yb,yc,yd,ye,yf, z)
 
 
 printResults :: (Show a1, Show a2, Show a3, Show a4, Show a5, Show a6,
                  Show a7, Show a8, Show a9, Show a10, Show a11, Show a12)
              => (a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12) -> IO ()
 printResults
-  (v, seqsz, sfile, k, rfile, root, cmpl, incmpl, t, hist, tasks, leaves) =
+  (v, seqsz, sfile, k_min, k_max, rfile, root, cmpl, t, hist, tasks, leaves) =
   zipWithM_ printTagged tags stuff
     where printTagged tag val = putStrLn (tag ++ val)
-          tags  = ["VERSION: ", "SEQUENTIAL_SIZE: ", "SPACE_FILE: ", "K: ",
+          tags  = ["VERSION: ", "SEQUENTIAL_SIZE: ",
+                   "SPACE_FILE: ", "K_MIN: ", "K_MAX: ",
                    "ROOTS_FILE: ", "ROOT: ",
-                   "COMPLETE_ARCS: ", "INCOMPLETE_ARCS: ",
-                   "RUNTIME: ",
+                   "COMPLETE_ARC_HISTOGRAM: ", "RUNTIME: ",
                    "TASK_HISTOGRAM: ", "TASKS: ", "SEQUENTIAL_TASKS: "]
-          stuff = [show v, show seqsz, show sfile, show k,
-                   show rfile, show root, show cmpl, show incmpl,
-                   show t, show hist, show tasks, show leaves]
+          stuff = [show v, show seqsz,
+                   show sfile, show k_min, show k_max,
+                   show rfile, show root,
+                   show cmpl, show t,
+                   show hist, show tasks, show leaves]
 
 
 -----------------------------------------------------------------------------
@@ -479,6 +597,7 @@ parseOpts args = do
 
 main :: IO ()
 main = do
+  return ()
   hSetBuffering stdout LineBuffering
   hSetBuffering stderr LineBuffering
   register declareStatic
@@ -486,8 +605,11 @@ main = do
   (conf, seed, args) <- parseOpts opts_args
   initrand seed
   -- parsing command line arguments (no real error checking)
-  let (ver, sfile, k, rfile, root, seqsz) = parseArgs args
-  putStrLn $ "arcs" ++ dispVersion ver ++ dispSpaceFile sfile ++ dispK k ++
+  let (ver, sfile, lower, upper, rfile, root, seqsz) = parseArgs args
+  let (k_min, k_max) | 3 <= lower && lower <= upper = (lower, upper)
+                     | otherwise                    = (0, 0)
+  putStrLn $ "arcs" ++ dispVersion ver ++ dispSpaceFile sfile ++
+             dispLower k_min ++ dispLower k_max ++
              dispRootsFile rfile ++ dispRoot root ++
              dispSeqSize seqsz
   -- read, construct and record ambient space
@@ -496,26 +618,24 @@ main = do
   -- construct root node of search tree
   !node0 <- do
     maybe_root <- readRoot rfile root
-    return $!! mkRoot space k maybe_root
+    return $!! mkRoot space k_min k_max maybe_root
   -- classify k-arcs
-  putStrLn $ "Classifying " ++ show k ++ "-arcs ..."
+  putStrLn $ "Classifying k-arcs, " ++ show k_min ++ " <= k <= " ++ show k_max
   case ver of
-    V0 -> do ((!complete, !incomplete), t) <- timeIO $ evaluate $
-                                                countArcs space node0
+    V0 -> do (arc_hist, t) <- timeIO $ evaluate $!!
+                                countArcs space node0
              let full_spawn_hist =
-                   foldl' (\ h _ -> push0Hist h) emptyHist (arc node0)
+                   foldl' (\ h _ -> pushZeroHist h) emptyHist (arc node0)
              let tasks = totalHist full_spawn_hist
-             printResults (V0, 0::SeqSize, sfile, k, rfile, root,
-                           complete, incomplete,
-                           t, full_spawn_hist, tasks, 0::Int)
+             printResults (V0, 0::SeqSize, sfile, k_min, k_max, rfile, root,
+                           arc_hist, t, full_spawn_hist, tasks, 0::Int)
     V1 -> do (!output, t) <- timeIO $ evaluate =<< runParIO conf
                                (countArcsPar seqsz node0)
              case output of
-               Nothing  -> return ()
-               Just (Result complete incomplete seq_tasks spawn_hist) -> do
+               Nothing -> return ()
+               Just (Result arc_hist spawn_hist seq_tasks) -> do
                  let full_spawn_hist =
-                       foldl' (\ h _ -> push0Hist h) spawn_hist (arc node0)
+                       foldl' (\ h _ -> pushZeroHist h) spawn_hist (arc node0)
                  let tasks = totalHist full_spawn_hist
-                 printResults (V1, seqsz, sfile, k, rfile, root,
-                               complete, incomplete,
-                               t, full_spawn_hist, tasks, seq_tasks)
+                 printResults (V1, seqsz, sfile, k_min, k_max, rfile, root,
+                               arc_hist, t, full_spawn_hist, tasks, seq_tasks)
