@@ -1,8 +1,8 @@
 c ProjectiveSpace(2,GF(2^2))
-c #points 21
-c #points 5/line
-c #lines  21
-c #lines  5/point
+d 21 #points
+d 5 #points/line
+d 21 #lines
+d 5 #lines/point
 l 1 2 5 7 8
 l 1 6 9 15 19
 l 1 3 11 12 14

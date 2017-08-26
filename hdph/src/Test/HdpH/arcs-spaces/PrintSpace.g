@@ -16,10 +16,10 @@ PrintSpace := function(space, file)
   fi;
 
   AppendTo(out, "c ", space, "\n");
-  AppendTo(out, "c #points ", Size(points), "\n");
-  AppendTo(out, "c #points ", Size(AsSet(Points(lines[1]))), "/line\n");
-  AppendTo(out, "c #lines  ", Size(lines), "\n");
-  AppendTo(out, "c #lines  ", Size(AsSet(Lines(points[1]))), "/point\n");
+  AppendTo(out, "d ", Size(points), " #points\n");
+  AppendTo(out, "d ", Size(AsSet(Points(lines[1]))), " #points/line\n");
+  AppendTo(out, "d ", Size(lines), " #lines\n");
+  AppendTo(out, "d ", Size(AsSet(Lines(points[1]))), " #lines/point\n");
 
   for l in lines do
     AppendTo(out, "l");

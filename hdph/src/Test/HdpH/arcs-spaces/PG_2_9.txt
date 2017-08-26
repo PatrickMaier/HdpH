@@ -1,8 +1,8 @@
 c ProjectiveSpace(2,GF(3^2))
-c #points 91
-c #points 10/line
-c #lines  91
-c #lines  10/point
+d 91 #points
+d 10 #points/line
+d 91 #lines
+d 10 #lines/point
 l 1 2 3 10 13 14 15 22 23 24
 l 1 11 16 28 36 51 54 70 76 88
 l 1 12 19 25 37 46 61 69 78 84

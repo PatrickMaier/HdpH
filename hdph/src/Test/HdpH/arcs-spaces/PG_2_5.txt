@@ -1,8 +1,8 @@
 c ProjectiveSpace(2,GF(5))
-c #points 31
-c #points 6/line
-c #lines  31
-c #lines  6/point
+d 31 #points
+d 6 #points/line
+d 31 #lines
+d 6 #lines/point
 l 1 2 3 4 5 6
 l 1 7 8 14 20 26
 l 1 9 10 17 24 31

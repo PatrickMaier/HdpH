@@ -1,8 +1,8 @@
 c ProjectiveSpace(2,GF(2))
-c #points 7
-c #points 3/line
-c #lines  7
-c #lines  3/point
+d 7 #points
+d 3 #points/line
+d 7 #lines
+d 3 #lines/point
 l 1 2 3
 l 1 4 5
 l 1 6 7
